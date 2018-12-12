@@ -1,0 +1,346 @@
+---
+title: 'Cleaning Business: Postal Codes and Neighborhoods (Part 4)'
+author: "Jonathan Chang"
+date: "November 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+```
+
+## Geographical Redundancy
+
+Addresses, lattitudes and longitudes, cities, postal codes, neighborhoods, and states -- they all describe the same thing in various granularities. Where the granularity is too fine, like address, it becomes useless to us, since every address is a text string, and have no obvious relation to each other. The algorithm will treat them as factors with no relation, when there is clearly a geographical relation. That's why we removed addresses earlier. Lat/long offers the same information, but since they're encoded as floats, they preserve the geographical relation. However, they don't give a cultural relation, such as demographics of an area. For that, city, postal code, or neighborhood might be the best bet. But what exactly is a neighborhood, is it finer than a postal code or coarser?
+
+If we keep all the fields, the redundancy might skew our results since the data is somewhat dependent. Linear regression requires features be independent; otherwise we couldn't take an inverse because the matrix would not be full rank. Even if we use pseudo-inverse, it damages the model. Plus, it adds to the file without providing enough additional information.
+
+Therefore, we will investigate how to best navigate this topic.
+
+## Which hood are you from?
+
+Let's gather some basic information about neighborhoods so we can clarify which questions to ask further.
+
+```{r}
+business = read.csv('business_preclean3.csv', stringsAsFactors=FALSE)
+num_cities = length(unique(business$city))
+num_hoods = length(unique(business$neighborhood))
+num_zips = length(unique(business$postal_code))
+```
+```{r, echo=FALSE}
+paste("There are", num_cities, "cities,", num_hoods,
+      "neighborhoods, and", num_zips, "zip codes", sep=' ') %>% cat()
+```
+
+I know I don't want to add `r num_zips` one-hot columns to this data set, so we need to find a way to reduce postal codes. Cities and neighborhoods seem to be... in the same neighborhood, so we should differentiate them. Let's group the data by city >> neighborhood >> businesses, and find out how big each neighborhood is, and how many neighborhoods are in a city.
+
+```{r}
+cityhood = business %>% group_by(city, neighborhood) %>% summarise(n=n())
+cityhood %>% filter(neighborhood != "") %>% arrange(desc(n)) %>% head(10)
+```
+
+There is quite a range. This result seems interesting though, so let's save it before we move on.
+
+```{r, eval=FALSE}
+write.csv(cityhood, 'cityhood.csv', row.names=FALSE)
+```
+
+We found out that businesses in neighborhoods vary widely, but it's kind of hard to tell from the table how much variance of neighborhoods there are in cities. So let's tabulate neighborhoods per city.
+
+```{r}
+numhoods = cityhood %>% filter(neighborhood != "") %>% 
+  group_by(city) %>% summarise(n=n()) %>% arrange(desc(n))
+cities_with_hoods = nrow(numhoods)
+cities_multi_hoods = nrow(numhoods %>% filter(n > 1))
+cities_five_hoods = nrow(numhoods %>% filter(n >= 5))
+```
+```{r, echo=FALSE}
+paste("Out of", cities_with_hoods, "cities with given",
+      "neighborhoods, there are", cities_multi_hoods,
+      "cities with more than 1 neighborhoods, and",
+      cities_five_hoods, "cities with 5 or more",
+      "neighborhoods.", sep=' ') %>% cat()
+```
+
+This tells us that `r num_hoods - cities_multi_hoods` out of `r num_hoods` occur in `r cities_multi_hoods` cities. That's quite a concentration.
+
+## Going Postal
+
+Now that we have an idea of the city-hood relation, let's bring postal codes into the picture. Since we just want to concentrate on areas labeled with a neighborhood, let's filter out all businesses without a hood.
+
+```{r}
+bhood = business[!(business$neighborhood==""),]
+num_zips_with_hoods = length(unique(bhood$postal_code))
+```
+
+Out of `r num_zips` postal codes, there are `r num_zips_with_hoods` with hoods. But wait a sec! If most postal codes have hoods, and most hoods coincide with `r cities_multi_hoods` cities, then that means most postal codes are from those same cities as well. 
+
+```{r}
+zips_per_hood = bhood %>% group_by(neighborhood, postal_code) %>%
+  summarise(n=n())
+n_zips_per_hood = nrow(zips_per_hood)
+overlap = n_zips_per_hood - num_zips_with_hoods
+```
+```{r, echo=FALSE}
+paste("There are", n_zips_per_hood, "postal code-neighborhood",
+      "combinations. This happens to be", overlap, "higher than the",
+      "number of unique postal codes with hoods. Therefore, there must",
+      "be", overlap, "hoods with duplicate postal codes in more than",
+      "one hood.", zip=' ') %>%
+  cat()
+```
+
+## Taking Off the Hood
+
+Let's look at businesses without given neighborhoods.
+
+```{r}
+bnohood = business[business$neighborhood=="",]
+num_zips_no_hood = length(unique(bnohood$postal_code))
+over_zip = num_zips_with_hoods + num_zips_no_hood - num_zips
+```
+```{r, echo=FALSE}
+paste("There are", num_zips_no_hood, "postal codes without a hood.",
+      "Since postal codes without and without hoods exceed the total",
+      "number of postal codes (", num_zips_with_hoods, "+", 
+      num_zips_no_hood, ">", num_zips, "), there must be", over_zip,
+      "postal codes with both hood and no hood.", zip=' ') %>% cat()
+```
+
+Previously, we found that most postal codes are associated to neighborhoods concentrated in a few cities. We want to find if postal codes are concentrated in a few cities without neighborhoods, or if this is just some phenomenon specific to cities with hoods.
+
+```{r}
+citycode = bnohood %>% group_by(city, postal_code) %>% summarise(n=n())
+numzips = citycode %>% group_by(city) %>% summarise(n=n())
+cities_gt1_zip = table(numzips$n > 1)['TRUE']
+cities_gt2_zip = table(numzips$n > 2)['TRUE']
+cities_gt5_zip = table(numzips$n > 5)['TRUE']
+cities_gt8_zip = table(numzips$n > 8)['TRUE']
+cities_gt10_zip = table(numzips$n > 10)['TRUE']
+
+most_business_per_zip = citycode %>% arrange(desc(n)) %>% head(10)
+most_zips_per_city = numzips %>% arrange(desc(n)) %>% head(10)
+```
+```{r, echo=FALSE, results='asis'}
+title = c("more than 1", "more than 2", "more than 5", "more than 8",
+          "more than 10")
+dat = c(cities_gt1_zip, cities_gt2_zip, cities_gt5_zip, cities_gt8_zip,
+        cities_gt10_zip)
+tabl = data.frame(title, dat)
+colnames(tabl) = c("Postal codes per city", "# cities")
+library(knitr)
+kable(tabl, caption="Cities with multiple postal codes.")
+```
+
+The following are perhaps more illuminating. The first shows that the largest postal codes are in the desert in Southwestern US, with most businesses per postal code.
+
+```{r, echo=FALSE}
+most_business_per_zip
+```
+
+The next table shows that the smallest postal codes are in Canada (Toronto, Calgary, and Mississauga), with most postal codes per city.
+```{r, echo=FALSE}
+most_zips_per_city
+```
+
+Phoenix and Las Vegas also tops in number of postal codes per city. 
+
+## Blame Canada
+
+We can see where the Canadians sit on businesses per postal code.
+
+```{r}
+citycode[citycode$city == 'Toronto',] %>% head(5)
+```
+
+```{r}
+citycode[citycode$city == 'Calgary',] %>% head(5)
+```
+
+```{r}
+citycode[citycode$city == 'Mississauga',] %>% head(5)
+```
+
+In each of the Canadian cities, there are only 1-2 businesses per postal code. This is too fine granularity, and since postal codes are factors with no apparent relation between codes, it's not useful to have such little businesses per postal code.
+
+A little bit of an aside, but during the course of this exercise, I found Aurora to be both a US and CA city name, so that has to be handled.
+
+This quora post suggests Canadian postal codes are more precise:
+https://www.quora.com/What-is-the-zip-code-for-Toronto-Canada
+
+Specifically, one post said they can cover as little as a block each. This is definitely too fine for our use.
+
+We can develop a little more intuition.
+
+```{r, echo=FALSE}
+paste("There are", length(unique(business$state)), "states,",
+      "3 are in Canada.", sep=' ') %>% cat()
+```
+
+```{r, warning=FALSE}
+ca_provinces = c("AB", "QC", "ON")
+ca_business = business[business$state==ca_provinces,]
+zips_in_ca = length(unique(ca_business$postal_code))
+hoods_in_ca = length(unique(ca_business$neighborhood))
+```
+```{r, echo=FALSE}
+paste("There are only", nrow(ca_business), "businesses in Canada,",
+      "out of", nrow(business), "total. They correspond to",
+      zips_in_ca, "postal codes and", hoods_in_ca, "hoods.", sep=' ') %>%
+  cat()
+```
+
+Note that this means that most of the Canadian postal codes only host 1 business, while Canadian neighborhoods host on average less than 8 businesses, if they were evenly distributed. But we've shown above that they're not.
+
+```{r}
+cahoods = ca_business %>% 
+  group_by(state, neighborhood) %>% 
+  summarise(n=n())
+cahoods_gteq5 = table(cahoods$n >= 5)['TRUE']
+cahoods_gteq10 = table(cahoods$n >= 10)['TRUE']
+
+cazips = ca_business %>% group_by(postal_code) %>% 
+  summarise(n=n()) %>% arrange(desc(n)) %>% head(5)
+cazips
+```
+```{r, echo=FALSE}
+paste("There are only", cahoods_gteq5, "Canadian neighborhoods",
+      "with 5 or more businesses, and", cahoods_gteq10, "with 10",
+      "or more businesses, out of", nrow(cahoods), "total.", 
+      "The maximum number of businesses per Canadian postal code",
+      "is", cazips$n[1], ".", sep=' ') %>%
+  cat()
+```
+
+Let's keep a copy of this result out of interest.
+
+```{r, eval=FALSE}
+write.csv(cahoods, 'cahoods.csv', row.names=FALSE)
+```
+
+Finally, we should have a baseline for how dense everything is. The following shows the number of businesses per state.
+```{r}
+business %>% group_by(state) %>% summarise(n=n()) %>% arrange(n) %>%
+  head(5)
+```
+
+We are also interested in how many businesses there are in a city, but there are way too many to list. So we use the mean to get a ballpark.
+```{r}
+b_city = business %>% group_by(city) %>% summarise(n=n(), state=first(state)) %>%
+  arrange(n)
+mean_business_per_city = mean(b_city$n)
+```
+```{r, echo=FALSE}
+paste("Note that there is an average of", mean_business_per_city,
+      "businesses per city.", sep=' ') %>% cat()
+```
+
+This can be our starting point for granularity control. Note that the mean for cities is similar to the businesses we have for the entire state of Illinois (IL). 
+
+```{r}
+small_cities = b_city[b_city$n <= 4,]
+```
+```{r, echo=FALSE}
+paste("Note that there are still", nrow(small_cities), "cities",
+      "with less than 5 businesses, which is huge considering",
+      "there are only", nrow(b_city), "total cities.", sep=' ') %>%
+  cat()
+```
+
+## Policies
+
+We've come to a number of conclusions on how to proceed with the original problem of reducing geographical fields.
+
+1. Attach state to all city names to solve duplicate names problem.
+2. Cities with less than *k* businesses use only the state.
+3. If a business is labeled with a neighborhood, use the hood if businesses per that hood *>= k*.
+4. If no neighborhood is labeled, use postal code if businesses per that postal code *>= k*.
+5. Delete state, neighborhood, and postal code columns.
+
+*k* is a potential parameter that can be tuned. 
+
+## Selection
+
+```{r}
+# Inputs:
+# data - dataframe
+# feature - name of feature column
+# k - postal code and neighbor hood frequency threshold
+factors_gt_k = function(data, feature, k) {
+  
+  # Create a list of values of the feature that we will keep.
+  factors = data %>% group_by(data[,feature]) %>% summarise(n=n())
+  names(factors) = c(feature, "n")
+  factors = factors[factors[,feature]!="None" & 
+                      factors[,"n"] >= k, feature]
+  
+  # Keep only the values.
+  factor(factors %>% pull(feature))
+}
+
+# Inputs:
+# data - dataframe
+# k - postal code and neighborhood frequency threshold
+reduce_business_geo = function(data, k) {
+  
+  # Combine city and state into same column.
+  data$city = paste(data$city, data$state, sep=", ")
+  
+  # Use only state for cities under k threshold.
+  cities = factors_gt_k(data, "city", k)
+  city_mask = !(data$city %in% cities)
+  data$city[city_mask] = data$state[city_mask]
+  
+  # Keep hoods with k threshold.
+  hoods = factors_gt_k(data, "neighborhood", k)
+  hood_mask = data$neighborhood %in% hoods
+  data$city[hood_mask] = data$neighborhood[hood_mask]
+  
+  # Keep postal codes with k threshold.
+  zips = factors_gt_k(data[data$neighborhood=="None",], 
+                      "postal_code", k)
+  zip_mask = data$postal_code %in% zips
+  data$city[zip_mask] = data$postal_code[zip_mask]
+  
+  # Scale lat, long.
+  data$latitude = round(scale(data$latitude), 4)
+  data$longitude = round(scale(data$longitude), 4)
+  
+  # Remove columns we don't need anymore.
+  data$state = NULL
+  data$neighborhood = NULL
+  data$postal_code = NULL
+  data$city = as.factor(data$city)
+  data
+}
+```
+
+I can't think of a good metric to pick this parameter so this will be sort of an art for now.
+
+```{r}
+k = 10
+```
+
+```{r}
+business = reduce_business_geo(business, k)
+num_locations = length(unique(business$city))
+```
+```{r, echo=FALSE}
+paste("There are now", num_locations, "locations, compared to",
+      num_cities, "cities we originally had.", sep=' ') %>% cat()
+```
+
+We don't want duplicate column names between any of our data, so let's do one last bit of clean up, then save.
+```{r}
+business$business_reviews = business$review_count
+business$review_count = NULL
+business$business_stars = business$stars
+business$stars = NULL
+```
+
+```{r, eval=FALSE}
+write.csv(business, 'business_preclean4.csv', row.names=FALSE)
+```
+
+We're almost finished with cleaning. The only thing left to do is to one-hot the attributes with dummy variables to aid regression.

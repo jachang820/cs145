@@ -1,0 +1,159 @@
+---
+title: "Simplify IDs"
+author: "Jonathan Chang"
+date: "October 31, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("../"))
+library(dplyr)
+library(reticulate)
+```
+
+## Motivation
+
+Previous operations have revealed that large file sizes take up more memory, slowing down the computer significantly. Most of the files are, however, taken up by fields that are unnecessarily long. Case in point: IDs. These are 22 characters, when observations are in the 5 digits. Therefore, we will convert them to a numerical sequence starting from 1 to save space and make processing easier.
+
+## Save Mappings
+
+First, we will create separate files with a map of the new IDs to old IDs, in case we need to revert for whatever reason.
+
+```{r, warning=FALSE}
+users = read.csv('users.csv', stringsAsFactors=FALSE)
+uid = seq.int(nrow(users))
+user_id_map = data.frame(user_id=users$user_id, uid=uid)
+
+friends = data.frame(uid=uid, users$friends)
+
+business = read.csv('business.csv')
+bid = seq.int(nrow(business))
+business_id_map = data.frame(business_id=business$business_id, 
+                             bid=bid)
+```
+
+This data will be saved, so we can process to our hearts' content without worrying about making mistakes.
+
+```{r, eval=FALSE}
+write.csv(user_id_map, 'user_id_map.csv', row.names=FALSE)
+write.csv(business_id_map, 'business_id_map.csv', row.names=FALSE)
+write.csv(friends, 'friends.csv', row.names=FALSE)
+```
+
+## Need New Friends
+
+We also want to convert all user friends into the new ID system, since that takes up a huge amount of space. However, this is too slow in R, so I've written a script in Python. Note that this is contingent on 'user_id_map.csv' and 'users.csv'. The code is as such:
+
+```{python, eval=FALSE}
+import pandas as pd
+
+uid_map = pd.read_csv('user_id_map.csv')
+hash = {}
+for index, row in uid_map.iterrows():
+	hash[row['user_id']] = str(row['uid'])
+print("Completed building map.")
+
+data = pd.read_csv('users.csv')
+friends_list = data['friends'].values
+for index, friends in enumerate(friends_list):
+	if friends != "None":
+		friends = friends.split(', ')
+		length = len(friends)
+		f_new = []
+		for i in range(length):
+			try:
+				if friends[i] in hash:
+					f_new.append(hash[friends[i]])
+			except:
+				print("Error on...\nFriends: {0}\nIndex: {1}".format(friends, i))
+				exit()
+		if len(f_new) == 0:
+			data.at[index, 'friends'] = "None"
+		else:
+			data.at[index, 'friends'] = ', '.join(f_new)
+
+	if index % 1000 == 0:
+		print("On row {0}...".format(index))
+data.to_csv('users_simplified.csv', index=False)
+
+```
+
+During this process, I noticed that a number of friends also do not exist in our user set. They are removed, since we have no information about them, so they are useless to us.
+
+## Other Files
+
+We take this opportunity to replace user ID and business ID from reviews, validate, and test sets.
+
+```{python, eval=FALSE}
+import pandas as pd
+
+uid_map = pd.read_csv('user_id_map.csv')
+bid_map = pd.read_csv('business_id_map.csv')
+
+uid = {}
+for index, row in uid_map.iterrows():
+	uid[row['user_id']] = str(row['uid'])
+print("Completed building user id map.")
+
+bid = {}
+for index, row in bid_map.iterrows():
+	bid[row['business_id']] = str(row['bid'])
+print("Completed building business id map.")
+
+def simplify(infile, outfile):
+	data = pd.read_csv('{0}.csv'.format(infile))
+	for index in range(len(data.index)):
+		data.at[index, 'user_id'] = uid[data.at[index, 'user_id']]
+		data.at[index, 'business_id'] = bid[data.at[index, 'business_id']]
+	data.rename(columns={'user_id': 'uid', 'business_id': 'bid'}, inplace=True)
+	data.to_csv('{0}.csv'.format(outfile), index=False)
+
+simplify('train_reviews', 'reviews_simplified')
+simplify('validate_queries', 'validate_simplified')
+simplify('test_queries', 'test_simplified')
+```
+
+## Final Steps
+
+Now we'll finalize the change and delete some useless fields.
+```{r}
+users = read.csv('users_simplified.csv')
+
+users$uid = uid
+business$bid = bid
+
+users$user_id = NULL
+users$name = NULL
+
+business$business_id = NULL
+business$address = NULL
+business$attributes = NULL
+business$hours = NULL
+business$is_open = NULL
+business$name = NULL
+```
+
+Finally, we'll write our new version of the data files.
+
+```{r, eval=FALSE}
+write.csv(users, 'users_simplified.csv', row.names=FALSE)
+write.csv(business, 'business_simplified.csv', 
+          row.names=FALSE)
+```
+
+File size has decreased massively!
+```{r}
+orig_user_size = round(file.size('users.csv')/1000000, 2)
+new_user_size = round(file.size('users_simplified.csv')/1000000, 2)
+orig_business_size = round(file.size('business.csv')/1000000, 2)
+new_business_size = round(file.size('business_simplified.csv')/1000000,
+                          2)
+```
+
+```{r, echo=FALSE}
+paste("Users:", orig_user_size, "MB -->", new_user_size, "MB\n",
+      sep=' ') %>% cat()
+paste("Business:", orig_business_size, "MB -->", new_business_size,
+      "MB\n", sep=' ') %>% cat()
+
+```

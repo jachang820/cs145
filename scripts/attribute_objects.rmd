@@ -1,0 +1,123 @@
+---
+title: 'Cleaning Business: Attribute Objects (Part 3)'
+author: "Jonathan Chang"
+date: "November 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+```
+
+## Objects
+
+Objects in Python, Javascript, etc., might as well be a list of key-value pairs, where the values can be any variable, or even functions (since functions are first class citizens). Objects are often passed as JSON (Javascript Object Notation), which are string-string key-value pairs of a specific format. Since the Yelp data set was at some point obtained from its REST API, it chose to use objects to attributes with several related properties.
+
+The problem, again, is that machine learning algorithms will recognize these as mere text or factors -- equally useless, when they're expecting numbers. Treating combinations of multiple properties as text also fails to preserve the relations that they hold. So, again, we'll split these into separate columns.
+
+To make our lives easier, we'll leverage existing libraries that split JSON into separate variables. We'll make a few changes to make these attribute objects compatible with JSON format.
+
+```{r, warning=FALSE}
+library(jsonlite)
+convert_json = function(attr) {
+  txt = gsub("'", "\"", attr)
+  txt = gsub("False", "false", txt)
+  gsub("True", "true", txt)
+}
+```
+
+## Splitting
+
+```{r}
+business = read.csv('business_preclean2.csv', stringsAsFactors=FALSE)
+```
+
+As before, we'll split these into separate columns. Let's see an example before we start.
+
+```{r, echo=FALSE}
+business$attributes_Music[55]
+```
+
+```{r}
+# Inputs
+# data - dataframe
+# attr - attribute name without the "attributes_" prefix
+expand_attr = function(data, attr) {
+  
+  # To keep new columns organized, we'll prepend the original
+  # attribute name to each new column.
+  prefix = attr
+  
+  # Add "attributes_" back in the column title, so we don't
+  # have to type this over and over.
+  attr = paste("attributes", attr, sep='_')
+
+  # Convert column to JSON format.
+  txt = convert_json(data[,attr])
+  df = data.frame()
+  
+  for (row in 1:length(txt)) {
+    
+    # Create a list using number of columns of new dataframe. 
+    cols = ncol(df)
+    df[row,] = rep("None", each=cols)
+    
+    # Attribute is not empty.
+    if (nchar(txt[row]) > 0) {
+      
+      # Extract properties from JSON attribute object.
+      js = fromJSON(txt[row])
+      colns = colnames(df)
+      
+      # Assign value of each property 
+      # (add column if we haven't seen it before).
+      for (category in 1:length(js)) {
+        cat_value = js[category]
+        cat_name = trimws(names(cat_value))
+        if (!(cat_name %in% colns)) {
+          df[cat_name] = "None"
+        }
+        df[row, cat_name] = ifelse(cat_value, 1, 0)
+      }
+    }
+  }
+  
+  # Add original attribute name as prefix to all new columns.
+  colns = colnames(df)
+  colns = gsub('-', '', colns)
+  colns = as.vector(sapply(colns, function(x) paste(prefix, x, sep='_')))
+  colnames(df) = colns
+  
+  # Replace original attribute column with new columns.
+  data = cbind(df, data)
+  data[,attr] = NULL
+  data
+}
+
+# Apply to every attribute that uses objects.
+business = expand_attr(business, "Music")
+business = expand_attr(business, "HairSpecializesIn")
+business = expand_attr(business, "GoodForMeal")
+business = expand_attr(business, "DietaryRestrictions")
+business = expand_attr(business, "BusinessParking")
+business = expand_attr(business, "BestNights")
+business = expand_attr(business, "Ambience")
+```
+
+We now have `r ncol(business)` columns. But that's the cost of doing business. The next best alternative is to delete these attributes altogether rather than keeping them in a useless format. Let's see the next columns before we save.
+
+```{r}
+business[55, grepl("Music_", names(business))]
+```
+
+Finally, let's change all blank values into "None" to keep it consistent.
+
+```{r}
+business[business==""] = "None"
+business[is.na(business)] = "None"
+```
+
+```{r, eval=FALSE}
+write.csv(business, 'business_preclean3.csv', row.names=FALSE)
+```

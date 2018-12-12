@@ -1,0 +1,374 @@
+---
+title: "Streamlining Model Training"
+author: "Jonathan Chang"
+date: "November 17, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("../"))
+library(dplyr)
+```
+```{r}
+source("scripts/error_analysis.r")
+```
+
+## Amazon Web Services (AWS) and Elastic Compute Cloud (EC2)
+
+Some preliminary training of random forest proved that it would take hours to train a single model, during of which the computer would intermittently slow to a halt. This not only makes other activities inconvenient, but is also a time bottleneck with respect to deadlines. Since procuring an expensive graphics card isn't an option, the cloud presents an interesting alternative. 
+
+AWS is the world's most used hosting service, and the EC2 service allows renting of server instances on-demand. The Linux servers can host RStudio Server and *ssh* file transfers, once private keys have been exchanged for a secure connection. The accompanying Simple Storage Service (S3) can host datasets, which are uploaded. We then use RStudio Server on our EC2 instance to pull data from S3, allowing us to run models on the cloud.
+
+The server instance run a gamut of computing power and memory. I had upgraded from the *t3 large* to the *m5 large*, and finally to the *c5 large*. The *t3* class of servers specializes in burst loads, and quickly ran out of computing credits. The *m5* class specializes in all-purpose computing, but quickly ran out of RAM. Finally, the *c5* specializes in computing, and the large has 16GB of RAM.
+
+## Generalized read CSV
+
+We use one of the preconfigured Amazon Machine Images (AMI) from **Louis Aslett** (http://www.louisaslett.com/RStudio_AMI/) that comes with RStudio Server installed. However, we cannot access files from S3 using our normal file access functions. Therefore, we'll want to write generalized functions to make model training preparation easier.
+
+```{r, warning=FALSE}
+library(aws.s3)
+library(aws.ec2metadata)
+BUCKET_NAME = "jc-rstudio"
+
+# Import CSV. Works with both local and S3. Returns NA if
+# file does not exist.
+read_csv = function(filename, ...) {
+  args = as.list(match.call())[-c(1,2)]
+  
+  if (aws.ec2metadata::is_ec2()) {
+    fname = paste("s3:/", BUCKET_NAME, filename, sep="/")
+    if (filename %in% aws.s3::get_bucket(
+      paste("s3:/", BUCKET_NAME, sep="/"))) {
+    	do.call(aws.s3::s3read_using, c(read.csv, object=fname, args))
+    } else {
+    	NULL
+    }
+  } else {
+  	if (file.exists(filename)) {
+    	do.call(read.csv, c(filename, args))
+    } else {
+    	NULL
+    }
+  }
+}
+```
+
+## Common subsetting functions
+
+There are several processes that repetitively occurs, and it would be nice if have a unified library to take care of those needs.
+
+```{r}
+# Get indexes by names. 
+# axis=1 for row name
+# axis=2 for column name
+which.index = function(data, name, axis=2) {
+  axis.names = ifelse(axis==2, names, rownames)
+  if (sum(names(data) %in% c(name)) > 0) {
+	  which(axis.names(data) %in% c(name))
+  } else {
+    NULL
+  }
+}
+
+# Remove row or column on condition.
+# axis=1 for row name
+# axis=2 for column name
+rm_if = function(condition, data, name, axis=2) {
+  index = which.index(data, name)
+  if (!is.null(index)) {
+    if (inherits(data, "list")) {
+      ifelse(condition, data[-index], data)
+    } else {
+      ifelse(condition, 
+             ifelse(axis==2, data[,-index], data[-index,]), 
+             data)
+    }
+  } else {
+    data
+  }
+}
+```
+
+## Unified Training
+
+Every machine learning algorithm library is structured in a similar way. There is one call to train the model, then another call to predict. The training function will take a formula and training set, or training predictors and labels, along with a list of parameters. It's a bit laborious to type these out every single time, so let's come up with an interface to simplify it as much as possible.
+
+```{r}
+# Use default parameters of alternatives are not supplied.
+default_params = list(alg_name="linreg")
+
+# Define which functions to use (default: linear regression).
+train_fct = lm
+predict_fct = predict
+
+# Update default params with list.
+update_params = function(params_lst) {
+  params = default_params[-1]
+  if (length(params_lst) > 0) {
+    param_names = names(params_lst)
+    for (i in 1:length(params_lst)) {
+      params[param_names[i]] = params_lst[param_names[i]]
+    }
+  }
+  params
+}
+
+# Remove parameters that match defaults from supplied list.
+remove_defaults = function(params_lst) {
+  if (length(params_lst) > 0 && length(default_params) > 1) {
+    param_names = names(default_params)
+    for (i in 2:length(default_params)) {
+      name = param_names[i]
+      p = default_params[i]
+      type = typeof(p)
+      if (!is.numeric(p) && !is.character(p)) {
+        ind = which.index(params_lst, name)
+        params_lst = params_lst[-ind]
+      } else if (!is.null(params_lst[name]) &&
+          deparse(quote(params_lst[name])) == 
+          deparse(quote(p))) {
+        ind = which.index(params_lst, name)
+        params_lst = params_lst[-ind]
+      }
+    }
+  }
+  params_lst
+}
+
+# Supplied named hyperparameters affect filenames.
+get_params = function(..., final=FALSE) {
+  args = as.list(match.call())[-c(1)]
+  args$final = NULL
+  params = update_params(args)
+  params = params[sort(names(params))]
+  rm_def = remove_defaults(params)
+  name = sapply(names(rm_def), function(p) { substr(p, 1, 2)})
+  param_str = paste(name, rm_def, collapse="_", sep="")
+  if (length(params) == 0 || nchar(param_str) == 0) {
+    param_str = "default"
+  }
+	alg_name = default_params$alg_name
+	csv = paste("submit", alg_name, param_str, sep='_')
+	if (final) {
+	  alg_name = paste(alg_name, "final", sep='_')
+	}
+	rds = paste(alg_name, param_str, sep='_')
+	list(args = params,
+				csv = paste("submit/", csv, ".csv", sep=''),
+				rds = paste("models/", rds, ".rds", sep=''),
+	      log = paste("logs/", rds, ".log", sep=''))
+}
+
+# Report and return best params.
+best_params = function(lower=1, upper=NULL, verbose=FALSE) {
+  fname = paste(default_params$alg_name, "grid.csv", sep='_')
+  p_grid = read.csv(fname, stringsAsFactors=FALSE)
+  if (is.null(upper)) {
+    upper = nrow(p_grid)
+  }
+  p_grid = p_grid[lower:upper, ]
+  min_index = which.min(p_grid$rmse)
+  n = names(p_grid)
+  best = p_grid[min_index, ]
+  if (verbose) {
+    features = paste(n, ":  ", best, sep='', collapse="\n")
+    paste("BEST PARAMS", features, sep="\n  ") %>% cat()
+  }  
+  best
+}
+```
+
+Let's define the actual training function.
+
+```{r}
+train_ = function(train_args, params) {
+  arg = c(train_args, params$args)
+  con = file(params$log)
+  sink(con, append=TRUE, split=TRUE)
+  model = do.call(train_fct, arg)
+  saveRDS(model, params$rds)
+  sink(NULL)
+  model
+}
+
+predict_ = function(model, newdata, 
+                    labels=NULL, pred_obj=NULL, params=NULL) {
+  pred = do.call(predict_fct, list(model, newdata))
+  if (!is.null(pred_obj)) {
+    pred = pred[pred_obj]
+  }
+  if (!is.null(labels)) {
+    rmse_ = sqrt(mean((pred - labels)^2))
+    paste("RMSE:", rmse_, sep=' ') %>% cat()
+    if (!is.null(params)) {
+      fname = paste(default_params$alg_name, "grid.csv", sep='_')
+      arg = c(params$rds, params$args, rmse_)
+      cols = c("modelname", names(params$args), "rmse")
+      names(arg) = cols
+      if (file.exists(fname)) {
+        prev = read_csv(fname, stringsAsFactors=FALSE)
+        row_n = nrow(prev)
+        col.names = FALSE
+      } else {
+        prev = data.frame()
+        row_n = 1
+        col.names = TRUE
+      }
+      for (n in 1:length(arg)) {
+        cols = names(arg)
+        prev[row_n, cols[n]] = arg[n]
+      }
+      write.table(prev, fname, sep=',', 
+                  col.names=col.names, append=TRUE, row.names=FALSE)
+    }
+  }
+  if (!is.null(params) && is.null(labels)) {
+    submit = data.frame(seq.int(0, nrow(newdata) - 1), pred)
+    names(submit) = c("index", "stars")
+    write.csv(submit, params$csv, row.names=FALSE, quote=FALSE)
+  }
+  pred
+}
+
+train.predict = function(train_args, params, newdata, 
+                         labels=NULL, pred_obj=NULL) {
+  model = train_(train_args, params)
+  predict_(model, newdata, labels, pred_obj, params)
+}
+```
+
+## Train, Val, Test
+
+One thing we have to repeat often is the steps to build the train, validation, and test sets. We can create a function to simplify that into one line.
+
+```{r}
+join_sets = function(data, split=FALSE) {
+  data = inner_join(data, users, by='uid')
+  data = inner_join(data, business, by='bid')
+  data$uid = NULL
+  data$bid = NULL
+  if (split && !is.null(data$stars)) {
+    data_y = data$stars
+    data_X = data[, -which.index(data, "stars")]
+    data = list(X=data_X, y=data_y)
+  }
+  data
+}
+```
+
+## Putting it all together
+
+Okay. Let's test all this on a simple model, say linear regression. Once we make sure it works, we'll copy it into an *.R* file so it can be sourced.
+
+```{r, warning=FALSE}
+# Load all files.
+users = read_csv("users_clean.csv")
+business = read_csv("business_wv.csv")
+train = read_csv("reviews_clean.csv")[, c("uid","bid","stars")]
+val = read_csv("validate_simplified.csv")
+test = read_csv("test_simplified.csv")
+
+# Build train, val, test.
+train = join_sets(train, split=TRUE)
+val = join_sets(val, split=TRUE)
+test = join_sets(test, split=FALSE)
+rm(users)
+rm(business)
+```
+
+```{r, warning=FALSE}
+# Define things about the algorithm library.
+default_params = list(alg_name="linreg")
+library(RcppEigen)
+train_fct = fastLmPure
+predict_fct = function(model, newdata) {
+  newdata %*% coef(model)
+}
+
+# Although there are no hyperparameters, 
+# we will initialize the file names.
+params = get_params()
+train_arg = list(X=as.matrix(train$X), y=as.matrix(train$y))
+```
+```{r}
+model = train_(train_arg, params)
+which(is.na(model$coefficients))
+```
+
+A coefficient of *NA* means there is either an insufficient sample size or the feature is colinear. In either case, we have to get rid of it for this model.
+
+```{r}
+train$X$compliment_cool = NULL
+val$X$compliment_cool = NULL
+train_arg = list(X=as.matrix(train$X), y=as.matrix(train$y))
+model = train_(train_arg, params)
+which(is.na(model$coefficients))
+```
+
+Since, there are no more *NA*, prediction should work now.
+
+```{r, warning=FALSE}
+pred = predict_(model, newdata=as.matrix(val$X), 
+                labels=val$y, params=params)
+```
+
+That's... surprisingly good. We will use these functions for training models with other algorithms. Let's save a final version for the stack.
+
+```{r, warning=FALSE}
+combined = list(X=rbind(train$X, val$X),
+                y=c(train$y, val$y))
+combined$X$compliment_cool = NULL
+test$compliment_cool = NULL
+train_arg = list(X=as.matrix(combined$X), y=as.matrix(combined$y))
+params = get_params(final=TRUE)
+model = train_(train_arg, params)
+pred = predict_(model, newdata=as.matrix(test), 
+                params=params)
+```
+
+Final let's try a generalized linear model with a Gaussian kernel.
+
+```{r, warning=FALSE, message=FALSE}
+default_params = list(alg_name="glmnet", type.measure="mse")
+library(glmnet)
+train_fct = cv.glmnet
+train_arg = list(x=as.matrix(train$X), y=train$y)
+params = get_params()
+model = train_(train_arg, params)
+plot(model)
+```
+
+The cross-validation presents two options.
+
+1. The lambda associated with the minimum RMSE.
+2. The largest lambda associated with 1 standard error above minimum RMSE, for regularization purposes.
+
+```{r, warning=FALSE}
+predict_fct = function(model, newdata) {
+  predict.cv.glmnet(model, newdata, s=params$args$lambda)
+}
+params = get_params(lambda="lambda.min")
+pred = predict_(model, newdata=as.matrix(val$X),
+                labels=val$y, params=params)
+```
+```{r, warning=FALSE}
+params = get_params(lambda="lambda.1se")
+pred = predict_(model, newdata=as.matrix(val$X), 
+                labels=val$y, params=params)
+```
+
+We'll train both for test set prediction for the stack.
+
+```{r, eval=FALSE}
+combined = list(X=rbind(train$X, val$X),
+                y=c(train$y, val$y))
+train_arg = list(x=as.matrix(combined$X), y=combined$y)
+params = get_params(final=TRUE)
+model = train_(train_arg, params)
+params = get_params(lambda="lambda.min", final=TRUE)
+pred = predict_(model, newdata=as.matrix(test), 
+                params=params)
+params = get_params(lambda="lambda.1se", final=TRUE)
+pred = predict_(model, newdata=as.matrix(test), 
+                params=params)
+```

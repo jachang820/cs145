@@ -1,0 +1,167 @@
+---
+title: 'Cleaning Business: PCA with Categories (Part 2)'
+author: "Jonathan Chang"
+date: "November 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+```
+
+## Factors are unordered
+```{r}
+business = read.csv('business_preclean1.csv')
+paste("Category factors:", length(unique(business$categories)), "\n", 
+      sep=' ') %>% cat()
+```
+
+I think the snippet above is indicative of a major problem, and not even the main problem we'll be discussing. Although some algorithms are better suited to deal with factors and categories (like trees), there is a problem with factors in general for algorithms which cannot deal with them (like linear regression). Internally, factors are stored as integers. While there's an ordered relation between one integer and the next, a factor and the next are not necessarily related at all. The solution to this is usually to create one-hot encoded columns, where each factor is split into a separate binary column.
+
+But c'mon... we have `r length(unique(business$categories))` factors. This will blow up our file into gigabytes. Closer inspection, however, shows that these factors are combinations of unique categories, so our first step is to find out how many unique categories there are.
+
+## Categories, not factors
+
+In the following scripts, we will create a frequency dictionary to see how often each category appears and sort them from highest to lowest.
+
+```{r}
+# List categories of each business.
+categories = as.character(business$categories)
+categories = strsplit(categories, ', ', fixed=TRUE)
+
+# List all unique categories.
+cat_list = Reduce(f = union, x = categories)
+cat_list[1:10]
+```
+  
+Next, we create a frequency dictionary.
+
+```{r}
+hash = new.env(hash=TRUE, parent=emptyenv(), size=length(cat_list))
+for (cats in categories) {
+  for (cat in cats) {
+    cat = trimws(cat)
+    hash[[cat]] = ifelse(exists(cat, hash), 
+                       hash[[cat]]+1, 1)
+  }
+}
+  
+# Convert hash to dataframe.
+cat_names = names(hash)
+cat_freq = data.frame(cat_names, unlist(as.list(hash)), row.names=c())
+colnames(cat_freq) = c("categories", "freq")
+  
+# Sort in descending order of frequency.
+cat_freq = cat_freq[order(-cat_freq$freq),]
+cat_freq[1:10,]
+```
+```{r, echo=FALSE}
+paste("There are", nrow(cat_freq), "unique categories.\n",
+      sep=' ') %>% cat()
+```
+
+Ouch! First, let's save.
+
+```{r, eval=FALSE}
+write.csv(cat_freq, 'cat_freq.csv', row.names=FALSE)
+```
+
+Now we'll split the categories into separate columns. Note that this code in R took a couple hours to run, so I'll be rewriting it in Python.
+
+```{python, eval=FALSE}
+import pandas as pd
+import numpy as np
+
+# Determine headers.
+categories = pd.read_csv('cat_freq.csv').loc[:, "categories"]
+categories = list(categories)
+
+# Determine rows and create new dataframe.
+business = pd.read_csv('business_preclean1.csv')
+nrow = len(business.index)
+df = pd.DataFrame(0, index=np.arange(nrow), columns=categories, dtype='int64')
+
+# Iterate businesses and count their categories.
+for index, row in business.iterrows():
+	if not pd.isnull(row['categories']):
+		cat_list = row['categories'].split(', ')
+		for cat in cat_list:
+			df.loc[index, cat] += 1
+	if index % 5000 == 0:
+		print("Processing row {0}...".format(index))
+
+# Change column names so they are more easily identifiable
+cat_dict = {}
+for cat in categories:
+	new_cat = cat.replace(' ', '')
+	new_cat = new_cat.replace('&', '')
+	new_cat = new_cat.replace('/', '')
+	new_cat = new_cat.replace('(', '')
+	new_cat = new_cat.replace(')', '')
+	new_cat = new_cat.replace("'", '')
+	new_cat = new_cat.replace('-', '')
+	new_cat = "cat_{0}".format(new_cat)
+	cat_dict[cat] = new_cat
+df = df.rename(columns=cat_dict)
+
+# Save the result.
+df.to_csv('catframe.csv', index=False)
+print("Completed!")
+```
+
+## Reduction
+
+We could manually go through all the categories to mine for similarities and combine them, but this might still be too laborous, and I'm lazy. We can see something about the distribution of these categories. For example, let's see how many categories are claimed by over 50 businesses and 10 businesses, respectively.
+
+```{r, echo=FALSE}
+cat("Categories claimed by more than 50 businesses:\n")
+table(cat_freq$freq > 50)
+cat("\nCategories claimed by more than 10 businesses:\n")
+table(cat_freq$freq > 10)
+```
+
+But is it helpful to just chop off insignificant categories? It is to an extent, but we'd like to preserve as much information as possible. This is where **principle component analysis (PCA)** comes in. Without getting into too much math, PCA rotates the axes of the dimensions to reduce as much variance as possible. It then gives the rotated axes in terms of most variance reduced. Columns that don't have much change in variances means that they contain little data to begin with. The disadvantage here is that we lose all interpretability, which I'm willing to sacrifice, but we don't actually care which category contributes to the result, we just want to find the maximally effective columns while minimizing the data as much as possible.
+
+## PCA
+
+First, we will train a PCA regression model. We won't be using it to predict anything, although we can. We'll just be using the rotated axes it computes as feature reduction.
+
+```{r}
+library(stats)
+cats = read.csv('catframe.csv')
+pca.model = prcomp(cats, scale=TRUE)
+pca.variance = summary(pca.model)$importance[3,]
+
+# Show how much cumulative variance first 5 columns take up.
+pca.variance[1:5]
+```
+
+We might want to save these PCA rotations in case we want to use more or less of them.
+
+```{r, eval=FALSE}
+write.csv(pca.model$rotation, 'cat_pca.csv', row.names=FALSE)
+```
+
+Now it's time to reduce the features. Recall that we have `r nrow(cat_freq)` categories. The general guideline is to keep 70% to 80% of the variance. I'm going to make a judgment call and err to the side of file size reduction because I have a slow computer. So I'll keep 70% of the variance.
+
+```{r}
+num_vectors = table(pca.variance < 0.7)["TRUE"]
+pca.vector = pca.model$rotation[, 1:num_vectors]
+pca.final = as.data.frame(as.matrix(cats) %*% pca.vector)
+
+# Save space
+pca.final = round(pca.final, 5)
+colnames(pca.final) = sapply(colnames(pca.final), function(name) {
+  paste("cat", name, sep='_')
+})
+
+# Replace categories column with PCA vectors
+business$categories = NULL
+business = cbind(business, pca.final)
+```
+```{r, eval=FALSE}
+write.csv(business, 'business_preclean2.csv', row.names=FALSE)
+```
+
+Next, we'll deal with attribute objects.

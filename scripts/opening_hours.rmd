@@ -1,0 +1,115 @@
+---
+title: 'Cleaning Business: Opening Hours (Part 1)'
+author: "Jonathan Chang"
+date: "November 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+```
+
+## Motivation
+
+The 'business.csv' data set has by far the most malformatted junk, so we'll be splitting this up into parts:
+
+1. Opening hours
+2. PCA with categories
+3. Attribute objects
+4. Zip codes and neighborhoods
+5. One-Hot & cleanup
+
+## What's wrong with the times?
+
+Business open hours are currently stored as a string of opening to closing times. Machine learning models cannot process strings, so they are usually considered factors. The problem, then, is that there are about 600 levels per each day of the week representing all the combinations of opening and closing hours. When we think about what's being encoded in here, actually there is just the opening time and closing time. Everything in between is encoded in a dash, which gives us no information at all. Therefore, what we should do is turn every day of the week into 2 columns, integers representing the opening and closing time.
+
+For example, the computer cannot tell the difference between *"9:0-17:30"* and *"9:0-18:0"*. It see them as two completely unrelated factors. The relations, that they open at the same time and close within half an hour of each other, are lost. By splitting them up into *9* and *9* for opening, it's easy to see they are the same; and *17.5* and *18*, the computer can determine their closeness.
+
+## Seeing is believing
+
+```{r}
+business = read.csv('business_simplified.csv', 
+                    stringsAsFactors=FALSE)
+business[1:10, c("hours_Monday")]
+```
+
+## Nuts and bolts
+
+```{r}
+convert_hours = function(df, day) {
+  # Simplify usage by prepending tags for the column names.
+  # Then, input only consists of the day of the week.
+  hours_name = paste("hours_", day, sep="")
+  open_name = paste("open_", day, sep="")
+  close_name = paste("close_", day, sep="")
+  hours = as.character(df[,c(hours_name)])
+  
+  # Split each time range by the '-'.
+  hours = t(sapply(strsplit(hours, '-', fixed=TRUE), 
+                     function(times) {
+                       
+    # Make sure time isn't blank.
+    if (!is.na(times[1])) {
+      
+      # Reconstruct "hours:minutes" into 
+      # double: hours.(fraction of hour).
+      open = unlist(strsplit(times[1], ':', fixed=TRUE))
+      open = as.double(open[1]) + as.double(open[2])/60
+      close = unlist(strsplit(times[2], ':', fixed=TRUE))
+      close = as.double(close[1]) + as.double(close[2])/60
+      
+      # Time wraps around at midnight, but we want to preserve
+      # that relation.
+      if (close <= open) {
+        close = close + 24
+      }
+      
+      # Represent the two new columns.
+      list(open=open, close=close)
+      
+    } else {
+      # If time was blank, use -1 for both times.
+      list(open= -1, close= -1)
+    }
+  }))
+  
+  # Format list into new dataframe with 2 columns.
+  hours = as.data.frame(hours)
+  hours$open = unlist(hours$open)
+  hours$close = unlist(hours$close)
+  colnames(hours) = c(open_name, close_name)
+  
+  # Replace with original format.
+  df[hours_name] = NULL
+  cbind(df, hours)
+}
+
+# Convert the format for each day
+business = convert_hours(business, "Monday")
+business = convert_hours(business, "Tuesday")
+business = convert_hours(business, "Wednesday")
+business = convert_hours(business, "Thursday")
+business = convert_hours(business, "Friday")
+business = convert_hours(business, "Saturday")
+business = convert_hours(business, "Sunday")
+
+# Show the new format
+business[1:5, c("open_Monday", "close_Monday")]
+```
+
+## Scale and center
+
+We don't require inputs to be human interpretable, and we want to normalize them so they're weighted properly in regression algorithms.
+
+```{r}
+business[,grepl("open_|close_", names(business))] = 
+  round(scale(business[,grepl("open_|close_", names(business))]), 3)
+```
+
+## Save
+```{r, eval=FALSE}
+write.csv(business, 'business_preclean1.csv', row.names=FALSE)
+```
+
+Next we'll fix the categories.

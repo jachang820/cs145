@@ -1,0 +1,577 @@
+---
+title: "So Extreme!"
+author: "Jonathan Chang"
+date: "November 9, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+```
+```{r, warning=FALSE, message=FALSE}
+library(xgboost)
+source("scripts/error_analysis.r")
+source("scripts/training_fcts.r")
+```
+
+## Boosting
+
+Previously we trained a random forest model, which did okay. This time we're going to fast forward two decades and use XGBoost (eXtreme Gradient Boost). While it was surely named by a 12 year old at heart, this model has also been known as the "GBM (Gradient Boosting Machine) Killer", since it has performed Xtremely competitively. The details of this algorithm is rather complicated, but in essence boosting is another ensemble technique.
+
+While random forest uses bagging (boostrap aggregation) to randomly sample the input with replacement, and average the results by some metric to reduce overfitting, boosting takes inherently weak classifiers in conjunction to form a more powerful one. Other algorithms in this family are the adaboost (adaptive boost), gradient boost, CatBoost, etc.
+
+We use XGBoost to skip to the head honcho of boosting. It's not the latest and leading edge, but it's a proven leader. And unlike adaboost and some others, XGBoost handles multiclass classification and regression inherently.
+
+## One-Hot vs. PCA vs. W2V
+
+Real quick, let's figure out which set to use with a baseline model. I know this isn't the most foolproof way, but it'll save some time for now and give a general indication.
+
+```{r}
+# This stuff won't change between trials.
+users = trainfuncs$read.csv('users_clean.csv')
+train = trainfuncs$read.csv('reviews_simplified.csv')
+train = train[, c("uid", "bid", "stars")]
+val = trainfuncs$read.csv('validate_simplified.csv')
+test = trainfuncs$read.csv('test_simplified.csv')
+
+# This stuff will.
+load_data = function(business_set) {
+  business_file <<- paste('business_', business_set, '.csv', sep='')
+  business <<- trainfuncs$read.csv(business_file)
+  combined <<- create_dmatrix(rbind(train, val), split=TRUE)
+  watchlist <<- create_watch()
+  dtest <<- create_dmatrix(test, split=FALSE)
+}
+
+# Convert data.frame to XGBoost's dense matrix format.
+create_dmatrix = function(df, split=TRUE) {
+  df = trainfuncs$join_sets(df, split)
+  if (split) {
+    xgb.DMatrix(as.matrix(df$X), label=df$y)  
+  } else {
+    xgb.DMatrix(as.matrix(df)) 
+  }
+}
+
+create_watch = function() {
+  dtrain = create_dmatrix(train)
+  dval = create_dmatrix(val)
+  
+  # Return watchlist
+  list(train=dtrain, eval=dval)
+}
+```
+
+Let's train an XGBoost model for each set and see which one works better preliminarily.
+
+```{r}
+trainfuncs$set_alg_name("xgboost")
+default_params = list(eta = 0.3, 
+                      gamma = 0.5,
+                      max_depth = 5, 
+                      min_child_weight = 5,
+                      subsample = 0.8, 
+                      colsample_bytree = 0.8, 
+                      lambda = 1, alpha = 0.2, 
+                      scale_pos_weight = 1,
+                      max_delta_step = 0,
+                      objective = "reg:linear")
+
+params = trainfuncs$get_params()
+
+train_fct = xgb.train
+predict_fct = predict
+train_args = list(nrounds = 1000,
+                  early_stopping_rounds = 25,
+                  metrics = list("rmse"),
+                  verbose = 1,
+                  print_every_n = 10)
+
+# Assumes watchlist has already been constructed.
+train_ = function(train_args, params) {
+  if (params$final) {
+    train = combined
+  } else {
+    train = watchlist$train
+  }
+  train_args = c(data=train, watchlist=list(watchlist),
+                 train_args)
+  params$args = list(params=params$args)
+  trainfuncs$train(train_args, params)
+}
+predict_ = function(model, params=NULL) {
+  if (params$final) {
+    test = dtest
+  } else {
+    test = watchlist$eval
+  }
+  trainfuncs$predict(model, newdata=test, 
+                     labels=getinfo(test, "label"),
+                     params=params)
+}
+train.predict = function(train_args, params) {
+  model = train_(train_args, params)
+  predict_(model, params)
+}
+```
+
+```{r}
+# Train model for label encoding.
+load_data('labels')
+model = train_(train_args, params)
+```
+
+```{r, warning=FALSE}
+# Train model for one-hot.
+load_data('onehot')
+pred = train_(train_args, params)
+```
+
+```{r}
+# Train model for PCA.
+load_data('pca')
+model = train_(train_args, params)
+```
+
+```{r}
+# Train model for Word2Vec.
+load_data('wv')
+model = train_(train_args, params)
+```
+
+It looks like labels and one-hot encoding actually performed the best. It's actually better than Random Forest and CatBoost right now, by default. I did an extensive trial run with XGBoost before but couldn't get it right, but I guess I have to re-evaluate. We'll use one-hot, since it's more mathematically sound.
+
+## Grid Search
+
+We'll be following the tuning strategy recommended here:
+https://www.analyticsvidhya.com/blog/2016/03/complete-guide-parameter-tuning-xgboost-with-codes-python/
+
+The first step is to tune *min_child_weight* and *max_depth*.
+
+Hyperparameter | Explanation
+-------------- | -----------
+min_child_weight | Minimum sum of weights of observations in a leaf node.
+max_depth | Maximum depth of the tree.
+gamma | Minimum loss reducation required to make a split.
+
+```{r}
+load_data('onehot')
+```
+```{r}
+# Trains a combination of all arguments.
+train_combo = function(...) {
+  # Create combination of arguments.
+  arg = c(as.list(match.call())[-1], best_updates)
+  arg = arg[!duplicated(names(arg))]
+  p_grid = do.call(expand.grid, arg)
+  
+  for (i in 1:nrow(p_grid)) {
+    paste("\n\nTrial ", i, "/", nrow(p_grid), ".\n") %>% cat()
+    params = do.call(trainfuncs$get_params,
+                     p_grid[i,])
+    pred = train.predict(train_args, params)
+  }
+}
+```
+```{r, eval=FALSE}
+train_combo(gamma=c(0,0.25,0.5,0.6,0.7,0.8,0.9,1,2,3,5,7,10,15,20),
+            max_depth=seq.int(1,9,2),
+            min_child_weight=seq.int(1,9,2))
+```
+
+And the best one is:
+
+```{r}
+best = trainfuncs$best_params(upper=376, verbose=TRUE)
+```
+
+But the best doesn't necessarily tell the whole story. For instance, there is some variation between each run due to randomness in the algorithm, and a point could be best due to noise. It might be informative to look at the overall trends between variables.
+
+```{r, fig.height=4}
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[1:376,]
+param_summary = function(p_hist, param) {
+  as.data.frame(p_hist %>% 
+    group_by_(param) %>% 
+    summarize(max=max(rmse),
+              mean=mean(rmse),
+              min=min(rmse)))
+}
+
+library(ggplot2)
+plot_param = function(p_hist, param) {
+  bands = param_summary(p_hist, param)
+  ggplot(bands) + 
+    geom_ribbon(aes(x=get(param), ymin=min, ymax=max), 
+                fill='lightsalmon', alpha=0.3) +
+    geom_line(aes(get(param), mean), color='indianred2', size=1) + 
+    ggtitle(paste("Mean RMSE\nby", param)) + 
+    xlab(param) + ylab("RMSE") + scale_x_continuous(expand = c(0,0)) +
+    theme_bw()
+}
+plot_param(p_hist, "gamma")
+```
+
+```{r, fig.height=4}
+plot_param(p_hist, "max_depth")
+```
+
+```{r, fig.height=4}
+plot_param(p_hist, "min_child_weight")
+```
+
+Judging from the graphs, *max_depth* tends to be best around 5, while the others tend to improve score as they increase. We might want to see if higher values would be even better.
+
+```{r, eval=FALSE}
+train_combo(gamma=c(10,15,20,25,30,35,40,45,50,75,100),
+            max_depth=5,
+            min_child_weight=seq.int(7,21,2))
+```
+
+Let's see our fruits of progress.
+
+```{r, fig.height=4}
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[1:464,]
+plot_param(p_hist, "gamma")
+```
+
+Interesting. First thing to note is that *gamma* might have peaked around 30. The second thing to note is that fixing *max_depth* to 5 drastically reduced the range of error, even on the lower end. So higher depth, even though on average it increased error, might bring the lowest error on a single run. Part of this might be attributed to overfitting, but we'll keep this result in mind.
+
+```{r, fig.height=4}
+plot_param(p_hist, "min_child_weight")
+```
+
+It seems *min_child_weight* bottomed out at around 11 and remained unchanging thereafter. Note that *gamma* of 30 is actually extremely high. Most online sources note that *gamma* should only be high when overfitting is an issue; typically, they say, it should be less than 1. We'll also note this for now, and possibly adjust it later after we've adjusted regularization. Let's see the lowest setting.
+
+```{r}
+best = trainfuncs$best_params(upper=464, verbose=TRUE)
+```
+
+This is a case of whether we pick the best trial, or the parameters that average best. In this case, we seemed to have traded a high *gamma* soft regularization for a high *min_child_weight*. Closer examination of the graphs show that this is indeed the lowest points, but a much higher mean occurred at these points. Would this mean that these settings are less robust, or are these actually the best settings? This is unclear. We could observe them in some detail.
+
+```{r}
+param_range = function(p_hist, param) {
+  bands = param_summary(p_hist, param)
+  rbind(lowest_max=bands[which.min(bands$max),],
+        lowest_mean=bands[which.min(bands$mean),],
+        lowest_min=bands[which.min(bands$min),])
+}
+param_range(p_hist, "gamma") 
+```
+
+```{r}
+param_range(p_hist, "min_child_weight")
+```
+
+So we can see *gamma* of 15 achieves slightly lower minimum but higher mean and maximum than 30. Similarly, the lower error at *min_child_weight* of 17 gets higher mean and maximum error than 11, but not by much. I'm going to experiment a bit and try the record from lowest mean *gamma*, lowest mean *min_child_weight*, and lowest minimum *min_child_weight*
+
+```{r}
+possible_updates = data.frame(gamma=c(30, 15, 15), 
+                              max_depth=c(5, 5, 5),
+                              min_child_weight=c(11, 11, 17))
+```
+
+WIth the hyperparameters set for tree structure, let's set parameters for subsampling the features that go into the tree.
+
+Hyperparameter | Explanation
+-------------- | -----------
+subsample | Fraction of observations to be sampled with each tree.
+colsample_bytree | Fraction of features to be sampled with each tree.
+
+We'll try a range of these with each of the three "bests" we found above.
+
+```{r, eval=FALSE}
+new_features = list(
+  subsample=c(0.6,0.7,0.8,0.9,1.0),
+  colsample_bytree=c(0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0))
+for (i in 1:3) {
+  best_updates = possible_updates[i, ]
+  do.call(train_combo, new_features))  
+}
+```
+
+Let's plot this for each of our chosen set of parameters.
+
+```{r, warning=FALSE, message=FALSE}
+library(gridExtra)
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[465:504,]
+mean_gamma_sub = plot_param(p_hist, "subsample")
+mean_gamma_col = plot_param(p_hist, "colsample_bytree")
+mean_gamma_sub_table = param_range(p_hist, "subsample")
+mean_gamma_col_table = param_range(p_hist, "colsample_bytree")
+
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[505:544,]
+mean_child_sub = plot_param(p_hist, "subsample")
+mean_child_col = plot_param(p_hist, "colsample_bytree")
+mean_child_sub_table = param_range(p_hist, "subsample")
+mean_child_col_table = param_range(p_hist, "colsample_bytree")
+
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[445:584,]
+min_child_sub = plot_param(p_hist, "subsample")
+min_child_col = plot_param(p_hist, "colsample_bytree")
+min_child_sub_table = param_range(p_hist, "subsample")
+min_child_col_table = param_range(p_hist, "colsample_bytree")
+```
+```{r, fig.height=4}
+grid.arrange(mean_gamma_sub, mean_gamma_col,
+             ncol=2, top="Best Mean gamma")
+```
+```{r, echo=FALSE}
+cat("subsample RMSE range, best mean gamma")
+```
+```{r, echo=FALSE}
+mean_gamma_sub_table
+```
+```{r, echo=FALSE}
+cat("colsample_bytree RMSE range, best mean gamma")
+```
+```{r, echo=FALSE}
+mean_gamma_col_table
+```
+
+```{r, fig.height=4}
+grid.arrange(mean_child_sub, mean_child_col,
+             ncol=2, top="Best Mean min_child_Weight")
+```
+```{r, echo=FALSE}
+cat("subsample RMSE range, best mean min_child_weight")
+```
+```{r, echo=FALSE}
+mean_child_sub_table
+```
+```{r, echo=FALSE}
+cat("colsample_bytree RMSE range, best mean min_child_weight")
+```
+```{r, echo=FALSE}
+mean_child_col_table
+```
+
+```{r, fig.height=4}
+grid.arrange(min_child_sub, min_child_col,
+             ncol=2, top="Best Minimum min_child_Weight")
+```
+```{r, echo=FALSE}
+cat("subsample RMSE range, best minimum min_child_weight")
+```
+```{r, echo=FALSE}
+min_child_sub_table
+```
+```{r, echo=FALSE}
+cat("colsample_bytree RMSE range, best minimum min_child_weight")
+```
+```{r, echo=FALSE}
+min_child_col_table
+```
+
+It's interesting that while there's a clear downward trend with *colsample_bytree* on each set, *subsample* is more ambiguous. We can also see that the *subsample* error is extremely volatile (i.e. high range) for high *gamma* (*gamma*=30 on best mean *gamma*), and for high *min_child_weight* (*min_child_weight*=17 on best minimum *min_child_weight*). Since these two have regularization effects, it probably means that no more regularization with *subsample* would be necessary.
+
+Also, while using the best minimum *min_child_weight* setting achieves the lowest minimum error, it is on average higher than using the best mean *min_child_weight* setting.
+
+While it seems exponentially infeasible to test multiple settings on each iteration of parameters, I think it's useful to interpret the problem in this way. Mean settings are like the expected value of a particular parameter, which in theory generalizes better to the test set. Minimum settings show how much better of a score I can get if I'm lucky. But in order to capitalize on this luck, I would likely need a high number of submissions, which overfits the test set in the process (ideally, if I submit all combinations of results, I get 100%). I think the point of the exercise is to minimize error while minimizing submissions, so using the best mean is the way to go.
+
+Going forward, we'll use that assumption. It seems using best mean *min_child_weight* gives the best results, with a minimum not far off from the lowest.
+
+```{r}
+best_updates = possible_updates[2, ]
+best_updates$subsample = 1
+best_updates$colsample_bytree = 1
+```
+
+Now let's tune the regularization. It seems variance isn't particularly a problem, but let's see.
+
+Hyperparameter | Explanation
+-------------- | -----------
+lambda | L2 regularization coefficient.
+alpha | L1 regularization coefficient.
+
+```{r, eval=FALSE}
+new_features = list(
+  lambda=c(0,1e-4,1e-3,5e-3,1e-2,0.1,0.5,1,1.5,2),
+  alpha=c(0,1e-4,1e-3,5e-3,1e-2,0.1,0.5,1,1.5,2))
+do.call(train_combo, new_features)  
+```
+```{r, fig.height=4}
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[585:684,]
+grid.arrange(plot_param(p_hist, "lambda"),
+             plot_param(p_hist, "alpha"),
+             ncol=2)
+```
+
+We can clearly see here that increasing *lambda* worsens error, while increasing *alpha* improves it. It's kind of puzzling why this would occur, but it might be caused by the curse of dimensionality. While it doesn't generally affect trees, the regularization it self seems to based on L2 and L1 norms respectively. L2 norms tend to be influenced by outliers more, or when there is a large feature set, the distance increases with the number of dimensions more (for $$x_i > 1$$).
+
+Anyways, we should try increasing *alpha* until we see a "U" to achieve an optimum.
+
+```{r}
+param_range(p_hist, "lambda")
+```
+
+```{r, eval=FALSE}
+new_features = list(lambda=c(0,1e-4,1e-3,0.01,0.1,0.2),
+  alpha=c(1.8,2,2.2,2.5,2.8,3))
+do.call(train_combo, new_features)  
+```
+```{r, fig.height=4}
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[685:720,]
+plot_param(p_hist, "alpha")
+```
+
+```{r}
+param_range(p_hist, "alpha")
+```
+
+Okay, it's really odd that every *alpha*=(1.8,2.0) converge. *alpha*=2.0 goes quite a bit lower. And this is regardless of *lambda*. Error diverges as *alpha* goes higher. Low *lambda* is still good, but exactly where is ambiguous. The mean are very close, as well as the range.
+
+Let's take this opportunity to fine tune while revisiting *gamma*.
+
+```{r, eval=FALSE}
+new_features = list(subsample=c(0.9,0.95,1),
+                    colsample_bytree=c(0.9,0.95,1),
+                    lambda=c(0.005,0.01,0.05,0.1,0.15,0.2,0.25),
+                    alpha=c(1.7,1.8,1.9,2,2.1))
+do.call(train_combo, best_updates)  
+```
+```{r, fig.height=8}
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[721:1035,]
+grid.arrange(plot_param(p_hist, "subsample"),
+             plot_param(p_hist, "colsample_bytree"),
+             plot_param(p_hist, "lambda"),
+             plot_param(p_hist, "alpha"),
+             ncol=2, top="Fine tune")
+```
+
+```{r}
+param_range(p_hist, "alpha")
+```
+
+*subsample* and *colsample_bytree* have clear minima at 0.95 and 1.0, respectively. *lambda* and *alpha* have quite similar distributions in our fine tuning range. At this point towards the end of our grid search, we might want to aim for lower lows at some sacrifice of lower highs, provided that the overall range shifts downwards.
+
+```{r}
+best = trainfuncs$best_params(upper=1035, verbose=TRUE)
+best$rmse = NULL
+```
+
+Those seem like good parameters to use. Before, when we trained *max_depth*, we didn't use any regularization, so the error exploded with higher depth. As a sanity check, let's test those assumptions again.
+
+```{r, eval=FALSE}
+best_updates = best
+new_features = list(max_depth=c(seq.int(5,11,2)),
+                    lambda=c(0.1,0.25,0.4,0.7),
+                    alpha=c(1.8,2.0,2.25,2.5))
+do.call(train_combo, new_features)
+```
+```{r, fig.height=8}
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[1036:1099,]
+grid.arrange(plot_param(p_hist, "max_depth"),
+             plot_param(p_hist, "lambda"),
+             plot_param(p_hist, "alpha"),
+             ncol=2, top="Depth vs Regularization")
+```
+
+We've reconfirmed that increasing *max_depth* makes it worse, although it's interesting that *alpha* is now improving past 2.0. Regardless, it's not achieving the same lows we've had previously, which perhaps shows the fallacy of relying on low trial runs without cross validation. However, cross validation takes too long for this project. We'll tune *gamma* for the parameters we've settled on.
+
+```{r, eval=FALSE}
+new_features = list(gamma=c(0,0.5,1,2,5,10,15,20,25,30),
+                    max_depth=c(4,5,6),
+                    min_child_weight=c(10,11,12))
+do.call(train_combo, new_features)
+```
+
+```{r, fig.height=8}
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[1100:1189,]
+grid.arrange(plot_param(p_hist, "gamma"),
+             plot_param(p_hist, "max_depth"),
+             plot_param(p_hist, "min_child_weight"),
+             ncol=2, top="Revisiting Gamma")
+```
+
+It seems *gamma* is fine where it is.
+
+We left the learning rate for last, since decreasing it might make it more robust, but also greatly increases training time.
+
+Hyperparameter | Explanation
+-------------- | -----------
+eta | Learning rate.
+
+```{r}
+best_updates = trainfuncs$best_params(upper=1189)
+best_updates$rmse = NULL
+```
+```{r, eval=FALSE}
+for (i in 1:3) {
+  new_features = list(eta=c(0.001,0.005,0.01,0.05,0.1,0.3,0.5))
+  do.call(train_combo, new_features)  
+}
+```
+```{r, fig.height=4, warning=FALSE}
+p_hist = trainfuncs$read.csv(trainfuncs$grid_file)[1190:1196,]
+eta_plot = plot_param(p_hist, "eta")
+eta_plot + ylim(1.0425, 1.0465)
+```
+```{r}
+best_updates = trainfuncs$best_params(upper=1196, verbose=TRUE)
+best_updates$rmse = NULL
+```
+
+We've reduced validation RMSE from roughly 1.0448 to 1.0426. We could fine tune further, perhaps, but the improvements we'd be chasing are increasingly small. Given that there are plenty of stones unturned in terms of different model hypotheses, it wouldn't be the best use of our time. So we'll use these parameters to train a final model to predict on the test set.
+
+```{r, fig.height=4}
+model = readRDS('models/xgboost_1.8_1_0.05_15_0.1_11_0.95.rds')
+imp = xgb.importance(model = model)
+xgb.ggplot.deepness(model = model)
+```
+
+```{r, fig.height=4}
+xgb.ggplot.importance(importance_matrix = imp, top_n = 20)
+```
+
+```{r, fig.height=4}
+xgb.plot.multi.trees(model, features_keep = 5)
+```
+
+```{r}
+set.seed(999)
+best_updates$eta = 0.1
+new_features = list(final = TRUE)
+train_args = list(nrounds = 175,
+                  verbose = 1,
+                  print_every_n = 10)
+train.predict = function(train_args, params) {
+  model = train_(train_args, params)
+  predict_(model, params)
+}
+do.call(train_combo, new_features)
+```
+
+The submission score was **1.05030**, which is kind of disappointing. With all that grid search, and a validation score of 1.032, I expected to get a little better. This highlights overfitting, even on the validation set. Future trials should probably combine train and validation sets, then use *K*-fold cross validation, so that we won't evaluate based on the same validation set performance over and over again.
+
+## Analysis
+
+Even though our best score for this model is comparatively horrid (it did worse than linear regression), we can make a final model and find, for instance, what it sees as important features.
+
+```{r}
+model = readRDS('models/xgboost_final_1.8_1_0.1_15_0.1_11_0.95.rds')
+y = getinfo(combined, 'label')
+pred = trainfuncs$predict(model, newdata=combined)
+score = analysis$rating_score(pred, y)
+score
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(ranger)
+rf = readRDS('models/ranger_final_40_306_respec.rds')
+business = trainfuncs$read.csv('business_cats.csv')
+combined = rbind(train, val)
+combined = trainfuncs$join_sets(combined, split=TRUE)
+pred = trainfuncs$predict(rf, newdata=combined$X, 
+                          pred_obj="predictions")
+rf_score = analysis$rating_score(pred, combined$y)
+rf_score
+```
+
+```{r}
+analysis$score_dist(score, rf_score)
+```
+
+And this highlights a serious flaw in our error analysis methodology. I'm guessing that if the predictions are closer to actual scores in most instances, but more rounds to the wrong number, it is possible to have better RMSE but worse accuracy, precision, and recall. In other words, our predictions for each rating have higher variance, but higher kurtosis (picture a normal curve with longer tails but a higher middle).
+
+Therefore, we'll update our error analysis suite next.

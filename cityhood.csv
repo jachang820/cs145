@@ -1,0 +1,436 @@
+"city","neighborhood","n"
+"Ahwatukee","",3
+"Ajax","",1
+"Allison Park","",1
+"Anthem","",3
+"Aurora","",2
+"Avon","",7
+"Avon Lake","",1
+"Avondale","",42
+"Beachwood","",12
+"Belmont","",5
+"Berea","",6
+"Bethel Park","",1
+"Blakeney","Ballantyne",1
+"Blue Diamond","",1
+"Boulder City","",16
+"Braddock","",2
+"Brampton","",6
+"Brecksville","",2
+"Bridgeville","",4
+"Broadview Heights","",1
+"Brook Park","",1
+"Brooklyn","",1
+"Buckeye","",7
+"Calgary","",71
+"Canonsburg","",2
+"Carefree","",4
+"Carnegie","Carnegie",5
+"Cave Creek","",27
+"Cecil","",1
+"Chagrin Falls","",6
+"Champaign","",47
+"Chandler","",347
+"Charlotte","",133
+"Charlotte","Arboretum",8
+"Charlotte","Ballantyne",44
+"Charlotte","Cotswold",7
+"Charlotte","Derita",1
+"Charlotte","Dilworth",21
+"Charlotte","Eastland",7
+"Charlotte","Elizabeth",30
+"Charlotte","First Ward",9
+"Charlotte","Fourth Ward",4
+"Charlotte","Highland Creek",4
+"Charlotte","Myers Park",18
+"Charlotte","NoDa",22
+"Charlotte","North Charlotte",2
+"Charlotte","Plaza Midwood",26
+"Charlotte","Sedgefield",7
+"Charlotte","Sherwood Forest",3
+"Charlotte","South End",56
+"Charlotte","South Park",50
+"Charlotte","Starmount",9
+"Charlotte","Steele Creek",28
+"Charlotte","Third Ward",6
+"Charlotte","University City",28
+"Charlotte","Uptown",79
+"Charlotte","Villa Heights",1
+"Chesterland","",1
+"Clark","",1
+"Cleveland","",20
+"Cleveland","Chinatown",1
+"Cleveland","Civic Center",7
+"Cleveland","Detroit-Shoreway",18
+"Cleveland","East Bank",7
+"Cleveland","Edgewater",4
+"Cleveland","Fairfax",2
+"Cleveland","Gateway District",47
+"Cleveland","Goodrich Kirtland",13
+"Cleveland","Jefferson",3
+"Cleveland","Little Italy",9
+"Cleveland","North Collinwood",3
+"Cleveland","Northeast District",3
+"Cleveland","Ohio City",38
+"Cleveland","Old Brooklyn",4
+"Cleveland","Playhouse Square",3
+"Cleveland","Riverside",5
+"Cleveland","St Clair-Superior",1
+"Cleveland","Tower City",3
+"Cleveland","Tremont",27
+"Cleveland","University",9
+"Cleveland","Warehouse District",14
+"Cleveland","West Bank",4
+"Cleveland","West Boulevard",2
+"Cleveland Heights","",22
+"Concord","",22
+"Concord Mills","",1
+"Coraopolis","",3
+"Cornelius","",15
+"Cramerton","",1
+"Cross Plains","",1
+"Cuyahoga Falls","",8
+"Davidson","",9
+"Don Mills","",1
+"Dorval","Saint-Laurent",1
+"East York","",2
+"Eastlake","",1
+"El Mirage","",1
+"Enterprise","Southeast",1
+"Etobicoke","",1
+"Etobicoke","Etobicoke",15
+"Fairlawn","",1
+"Fairview","",1
+"Fairview Park","",3
+"Fitchburg","",8
+"Fort McDowell","",1
+"Fort Mill","",15
+"Fountain Hills","",13
+"Frazer","",1
+"Gastonia","",5
+"Gilbert","",254
+"Glendale","",192
+"Goodyear","",59
+"Grand River","",1
+"Guadalupe","",1
+"Harrisburg","",1
+"Henderson","",307
+"Henderson","Anthem",127
+"Henderson","Downtown",1
+"Henderson","Southeast",11
+"Highland Heights","",3
+"Higley","",1
+"Homestead","Homestead",9
+"Hudson","",7
+"Huntersville","",26
+"Independence","",10
+"Indian Land","",1
+"Indian Trail","",2
+"Irwin","",1
+"Kannapolis","",1
+"Kent","",6
+"L'Île-Perrot","Ile-Perrot",1
+"Lake Wylie","",1
+"Lakewood","",35
+"Las  Vegas","",1
+"Las  Vegas","Westside",1
+"las vegas","",3
+"Las vegas","Southwest",1
+"Las Vegas","",470
+"Las Vegas","Anthem",7
+"Las Vegas","Centennial",105
+"Las Vegas","Chinatown",190
+"Las Vegas","Downtown",222
+"Las Vegas","Eastside",234
+"Las Vegas","Northwest",86
+"Las Vegas","South Summerlin",70
+"Las Vegas","Southeast",350
+"Las Vegas","Southwest",180
+"Las Vegas","Spring Valley",385
+"Las Vegas","Summerlin",78
+"Las Vegas","Sunrise",18
+"Las Vegas","The Lakes",16
+"Las Vegas","The Strip",759
+"Las Vegas","University",39
+"Las Vegas","Westside",360
+"LasVegas","The Strip",1
+"Laval","Laval",1
+"Laveen","",3
+"Lawrenceville","Lawrenceville",1
+"Leetsdale","",1
+"Litchfield Park","",14
+"Lower Lawrenceville","Lawrenceville",1
+"Lyndhurst","",7
+"Madison","",45
+"Madison","Bay Creek",2
+"Madison","Bluff Acres",1
+"Madison","Capitol",80
+"Madison","Carpenter-Ridgeway",1
+"Madison","Dudgeon-Monroe",6
+"Madison","Eken Park",3
+"Madison","Emerson East",1
+"Madison","Greenbush",6
+"Madison","Hawthorne",3
+"Madison","Junction Ridge",3
+"Madison","Lake Edge",1
+"Madison","Mayfair Park",1
+"Madison","McClellan Park",1
+"Madison","Regent",2
+"Madison","Schenk - Atwood",14
+"Madison","Sherman",2
+"Madison","South Campus",3
+"Madison","Spring Harbor",1
+"Madison","Starkweather - Yahar",1
+"Madison","Tenney - Lapham",7
+"Madison","Vilas",5
+"Madison","Westmorland",1
+"Madison","Wexford",1
+"Madison","Williamson - Marquette",16
+"Madison","Willy St",2
+"Markham","",36
+"Markham","Box Grove",2
+"Markham","Brown's Corners",18
+"Markham","Buttonville",1
+"Markham","Langstaff",3
+"Markham","Milliken",6
+"Markham","Scarborough",2
+"Markham","Unionville",26
+"Markham","Unionville Mainstreet",3
+"Matthews","",22
+"Mayfield","",1
+"McMurray","",1
+"Medina","",4
+"Mentor","",4
+"Mentor-on-the-Lake","",1
+"Mesa","",322
+"MESA","",13
+"Middleburg Heights","",1
+"Middleton","",19
+"Mint Hill","",1
+"Missisauga","",1
+"Mississauga","",44
+"Mississauga","Cooksville",1
+"Mississauga","Dixie",2
+"Mississauga","East Credit",10
+"Mississauga","Erin Mills",1
+"Mississauga","Meadowvale Village",1
+"Mississauga","Mississauga Valley",1
+"Mississauga","Port Credit",5
+"Mississauga","Streetsville",2
+"Monona","",2
+"Monroe","",3
+"Monroeville","",9
+"Montréal","",1
+"Montréal","Côte-des-Neiges",2
+"Montréal","Mercier-Hochelaga-Maisonneuve",2
+"Montréal","Mont-Royal",2
+"Montréal","Notre-Dame-de-Grâce",1
+"Montréal","Outremont",2
+"Montréal","Plateau-Mont-Royal",58
+"Montréal","Rosemont-La Petite-Patrie",8
+"Montréal","Sud-Ouest",7
+"Montréal","Ville-Marie",135
+"Montreal","Plateau-Mont-Royal",2
+"Montreal","Rosemont-La Petite-Patrie",1
+"Montreal","Ville-Marie",5
+"Montrose","",1
+"Moon Township","",3
+"Moreland Hills","",1
+"Mount Holly","",1
+"Mount Horeb","",1
+"Mount Lebanon","",2
+"Mt. Lebanon","",2
+"Munroe Falls","",1
+"Murrysville","",1
+"N Las Vegas","",1
+"N. Las Vegas","",2
+"Newmarket","",3
+"North Huntingdon","",1
+"North Las Vegas","",98
+"North Las Vegas","Northwest",2
+"North Olmsted","",7
+"North Randall","",1
+"North Royalton","",1
+"North York","",11
+"North York","Hogg's Hollow",1
+"North York","Willowdale",10
+"Northfield","",1
+"Oakmont","",1
+"Oakville","",5
+"Olmsted Falls","",2
+"Orange Village","",1
+"Outremont","Outremont",1
+"Paradise","The Strip",1
+"Paradise Valley","",13
+"Parma","",10
+"Parma","Cascade Crossing",1
+"Peninsula","",2
+"Peoria","",107
+"Pepper Pike","",1
+"Pheonix","",1
+"Phoenix","",1435
+"Pineville","",11
+"Pittsburgh","",56
+"Pittsburgh","Allentown",1
+"Pittsburgh","Aspinwall",1
+"Pittsburgh","Banksville",1
+"Pittsburgh","Beechview",4
+"Pittsburgh","Bloomfield",21
+"Pittsburgh","Brookline",1
+"Pittsburgh","Dormont",4
+"Pittsburgh","Downtown",65
+"Pittsburgh","Duquesne Heights",4
+"Pittsburgh","East Liberty",13
+"Pittsburgh","Friendship",1
+"Pittsburgh","Garfield",4
+"Pittsburgh","Greenfield",2
+"Pittsburgh","Highland Park",7
+"Pittsburgh","Homestead",1
+"Pittsburgh","Lawrenceville",29
+"Pittsburgh","Mt. Washington",8
+"Pittsburgh","North Side",30
+"Pittsburgh","Oakland",40
+"Pittsburgh","Point Breeze",2
+"Pittsburgh","Regent Square",1
+"Pittsburgh","Shadyside",40
+"Pittsburgh","South Side",58
+"Pittsburgh","Squirrel Hill",33
+"Pittsburgh","Strip District",39
+"Pittsburgh","Troy Hill",2
+"Pittsburgh","West End",3
+"Rexdale","Etobicoke",1
+"Richfield","",1
+"Richmond Heights","",1
+"Richmond Hill","",39
+"Robinson","",1
+"Robinson Township","",1
+"Robinson Twp.","",1
+"Rocky River","",11
+"Ross Township","",1
+"San Rafael","",1
+"San Tan Valley","",1
+"Scarborough","Milliken",4
+"Scarborough","Scarborough",21
+"Scottdale","",3
+"Scottsdale","",799
+"Seven Hills","",2
+"Sewickley","Sewickley",1
+"Sloan","",1
+"Solon","",5
+"South Euclid","",1
+"South Las Vegas","Southeast",1
+"South Las Vegas","Spring Valley",1
+"South Las Vegas","The Strip",1
+"Spring Valley","Chinatown",1
+"Stallings","",1
+"Stoughton","",1
+"Stow","",1
+"Streetsboro","",1
+"Strongsville","",10
+"Summerlin","South Summerlin",1
+"Sun City","",3
+"Sun Prairie","",6
+"Surprise","",67
+"Tega Cay","",2
+"Tempe","",440
+"Thornhill","",8
+"Thornhill","Langstaff",3
+"Thornhill","Thornhill",2
+"Thornhill","Thornhill Woods",1
+"Tolleson","",4
+"Tornto","",1
+"Toronto","",140
+"Toronto","Alexandra Park",11
+"Toronto","Bayview Village",3
+"Toronto","Beaconsfield Village",6
+"Toronto","Bickford Park",6
+"Toronto","Bloor-West Village",2
+"Toronto","Bloordale Village",2
+"Toronto","Brockton Village",2
+"Toronto","Cabbagetown",3
+"Toronto","Casa Loma",1
+"Toronto","Chinatown",35
+"Toronto","Christie Pits",4
+"Toronto","Church-Wellesley Village",27
+"Toronto","City Place",2
+"Toronto","Corktown",20
+"Toronto","Deer Park",2
+"Toronto","Discovery District",3
+"Toronto","Distillery District",10
+"Toronto","Dovercourt",3
+"Toronto","Downsview",1
+"Toronto","Downtown Core",135
+"Toronto","Dufferin Grove",4
+"Toronto","East York",1
+"Toronto","Entertainment District",72
+"Toronto","Etobicoke",11
+"Toronto","Financial District",22
+"Toronto","Greektown",12
+"Toronto","Harbourfront",9
+"Toronto","High Park",1
+"Toronto","Kensington Market",34
+"Toronto","Koreatown",15
+"Toronto","Leslieville",19
+"Toronto","Liberty Village",7
+"Toronto","Little Italy",20
+"Toronto","Little Portugal",7
+"Toronto","Milliken",15
+"Toronto","Mount Pleasant and Davisville",7
+"Toronto","New Toronto",1
+"Toronto","Niagara",13
+"Toronto","Ossington Strip",20
+"Toronto","Palmerston",4
+"Toronto","Parkdale",12
+"Toronto","Queen Street West",36
+"Toronto","Riverdale",14
+"Toronto","Roncesvalles",6
+"Toronto","Rosedale",2
+"Toronto","Ryerson",17
+"Toronto","Scarborough",24
+"Toronto","Seaton Village",1
+"Toronto","South Hill",1
+"Toronto","St. Lawrence",30
+"Toronto","Summer Hill",2
+"Toronto","Swansea",1
+"Toronto","The Annex",27
+"Toronto","The Beach",3
+"Toronto","The Danforth",3
+"Toronto","The Junction",10
+"Toronto","Trinity Bellwoods",8
+"Toronto","University of Toronto",1
+"Toronto","Upper Beach",1
+"Toronto","Wallace Emerson",1
+"Toronto","West Queen West",7
+"Toronto","Willowdale",24
+"Toronto","Wychwood",2
+"Toronto","Yonge and Eglinton",14
+"Toronto","Yonge and St. Clair",2
+"Toronto","Yorkville",32
+"Tremont","Tremont",1
+"Twinsburg","",2
+"Unionville","Unionville",1
+"Unionville","Unionville Mainstreet",4
+"University Heights","",2
+"Upper Saint Clair","",1
+"Upper St Clair","",1
+"Urbana","",10
+"Valley View","",4
+"Vaughan","",15
+"Vaughan","Edgeley",1
+"Vaughan","Pine Grove",2
+"Verdun","Verdun",1
+"Verona","",1
+"Warrensville Heights","",2
+"Waunakee","",1
+"Waxhaw","",2
+"West Homestead","Homestead",4
+"West Mifflin","",1
+"Westlake","",14
+"Westmount","Westmount",1
+"Wexford","",4
+"Willoughby","",4
+"Woodbridge","",1
+"Woodbridge","Pine Grove",2
+"Woodmere","",8
+"Woodmere Village","",1
+"Youngtown","",1

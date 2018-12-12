@@ -1,0 +1,113 @@
+---
+title: "Mean Modeling"
+author: "Jonathan Chang"
+date: "October 31, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("../"))
+library(dplyr)
+```
+
+## Baseline
+
+As a baseline, before we start using machine learning models, it makes sense to predict with the mean to see what kind of ball park error we should expect.
+
+But first we should cop a rough feel for the data.
+
+```{r}
+users = read.csv('users.csv')
+business = read.csv('business.csv')
+reviews = read.csv('train_reviews.csv')
+review_count = sum(users$review_count)
+user_mean = mean(users$average_stars)
+user_median = median(users$average_stars)
+business_mean = mean(business$stars)
+business_median = median(business$stars)
+review_mean = mean(reviews$stars)
+review_median = median(reviews$stars)
+```
+```{r, echo=FALSE}
+paste("Reviews written by all users:", review_count, "\n", 
+      sep=' ') %>% cat()
+paste("Mean stars by a user:", user_mean, "\n",
+      sep=' ') %>% cat()
+paste("Median stars by a user:", user_median, "\n",
+      sep=' ') %>% cat()
+paste("Mean stars to a business:", business_mean, "\n",
+      sep=' ') %>% cat()
+paste("Median stars to a business:", business_median, "\n",
+      sep=' ') %>% cat()
+paste("Mean stars of reviews we have:", review_mean, "\n",
+      sep=' ') %>% cat()
+paste("Median stars of reviews we have:", review_median, "\n",
+      sep=' ') %>% cat()
+```
+
+The distribution in each set seems pretty close. There's no major skew. We could also test variance, but I think it's pretty reasonable to assume that each set of representative overall.
+
+## Validation Error
+
+Let's run some tests on the validation set to see what kind of RMSE we should expect.
+
+```{r, warning=FALSE}
+validate = read.csv('validate_queries.csv')
+val_users = inner_join(validate, users, by="user_id")
+error = mean(val_users$average_stars) - validate$stars
+rmse_overall_user = sqrt(mean(error^2))
+
+error = val_users$average_stars - validate$stars
+rmse_each_user = sqrt(mean(error^2))
+
+business_cols = colnames(business)
+business_cols[60] = "average_stars"
+colnames(business) = business_cols
+val_business = inner_join(validate, business, by="business_id")
+error = mean(val_business$average_stars) - validate$stars
+rmse_overall_business = sqrt(mean(error^2))
+
+error = val_business$average_stars - validate$stars
+rmse_each_business = sqrt(mean(error^2))
+```
+```{r, echo=FALSE}
+paste("RMSE using mean rating of all users:", rmse_overall_user,
+      "\n", sep=' ') %>% cat()
+paste("RMSE using mean rating of each user:", rmse_each_user,
+      "\n", sep=' ') %>% cat()
+paste("RMSE using mean rating of all business:", rmse_overall_business,
+      "\n", sep=' ') %>% cat()
+paste("RMSE using mean rating of each business:", rmse_each_business,
+      "\n", sep=' ') %>% cat()
+```
+
+## Prediction
+
+Note: In hindsight, I should've used the validation in the average, but it doesn't matter. We'll get much better scores later. :)
+
+We use the mean rating of each user as a baseline, since it scored the best.
+```{r, warning=FALSE}
+test = read.csv('test_queries.csv')
+test_users = inner_join(test, users, by="user_id")
+avg_stars = test_users$average_stars
+submit = data.frame(seq.int(0, length(avg_stars)-1), avg_stars)
+colnames(submit) = c("index", "stars")
+```
+
+This received a **1.13383**.
+
+```{r, eval=FALSE}
+write.csv(submit, 'submit_baseline.csv', row.names=FALSE, quote=FALSE)
+```
+
+Next, we'll try rounding to the nearest whole. Since RMSE is mean error, it doesn't really make sense to round from the mean, but we aren't lacking in submissions...
+
+```{r, warning=FALSE}
+submit$stars = round(submit$stars)
+```
+
+This received a **1.16683**, which is a bit worse, as expected.
+
+```{r, eval=FALSE}
+write.csv(submit, 'submit_mean_rounded.csv', row.names=FALSE, quote=FALSE)
+```

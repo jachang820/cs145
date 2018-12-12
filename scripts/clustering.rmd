@@ -1,0 +1,138 @@
+---
+title: "Clustering"
+author: "Jonathan Chang"
+date: "November 27, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("../"))
+```
+```{r, warning=FALSE, message=FALSE}
+source('scripts/error_analysis.r')
+source('scripts/training_fcts.r')
+```
+
+## k-Nearest Neighbors
+
+k-NN clustering isn't expected to get the best results.
+
+1. It is unsupervised.
+2. Our data is far too sparse.
+
+But what it might do is provide an alternate perspective into a stacked model, or perhaps as an additional feature to be trained in another model. It tells us some information about the similarity between user-business pairs and other user-business pairs.
+
+## The usual...
+
+We'll start this by importing all the requisite datasets.
+
+```{r}
+users = trainfuncs$read.csv('users_clean.csv')
+business = trainfuncs$read.csv('business_wv.csv')
+train = trainfuncs$read.csv('reviews_clean.csv')
+train = train[, c("uid", "bid", "stars")]
+val = trainfuncs$read.csv('validate_simplified.csv')
+test = trainfuncs$read.csv('test_simplified.csv')
+
+train = trainfuncs$join_sets(train, split=TRUE)
+val = trainfuncs$join_sets(val, split=TRUE)
+test = trainfuncs$join_sets(test, split=FALSE)
+```
+
+## Batches
+
+Since kNN takes a *loooong* time to run, this following function will break the job into batches, so we can have intermediate save points, so to speak, so that we can stop the job midway without losing all progress. We'll consider 100 predictions to be a batch, so it writes the results in that interval. 
+
+```{r}
+library(class)
+run.knn = function(newdata, k, batch, final=FALSE) {
+  start = (batch - 1) * 100 + 1
+  end = batch * 100
+  if (end > nrow(newdata)) {
+    end = nrow(newdata)
+  }
+  if (start > nrow(newdata)) {
+    cat("It's okay, you can stop now.")
+  } else {
+    if (final) {
+      fname = paste("knn", k, "wv_preds_final.csv", sep='_')
+    } else {
+      fname = paste("knn", k, "wv_preds.csv", sep='_')
+    }
+    pred = knn(train$X, newdata[start:end, ], 
+               cl = train$y, k = k, prob = TRUE)
+    pred = data.frame(pred = pred, prob = attributes(pred)$prob)
+    if (file.exists(fname)) {
+      write.table(pred, fname, col.names = FALSE,
+                  sep = ',', append = TRUE, row.names = FALSE)
+    } else {
+      write.table(pred, fname, col.names = TRUE,
+                  sep = ',', append = FALSE, row.names = FALSE)  
+    }
+    
+  }
+}
+```
+
+We have this number of batches:
+
+```{r}
+n_batches = ceiling(nrow(val$X)/100)
+n_batches
+```
+
+## Searching k
+
+One problem we have is we don't know the optimal number of neighbors to consider. We'll do a grid search over the validation set, considering odd *k* so we don't have to deal with tiebreakers.
+
+```{r, eval=FALSE}
+for (k in seq.int(15,25,2)) {
+  for (i in 1:501) {
+    paste("\nk:", k, "batch:", i, "\n", sep=' ') %>% cat()
+    #run.knn(val_sample, k, i)
+    run.knn(val$X, k, i)
+  }
+}
+```
+
+The results are generated into different text files, so we'll predict on each *k* and see which one has the lowest validation RMSE.
+
+```{r}
+x = c(seq.int(15,25,2))
+i = 1
+rmse = c()
+for (k in x) {
+  fname = paste("knn", k, "wv_preds.csv", sep='_')
+  pred = read.csv(fname, stringsAsFactors = FALSE)
+  pred = as.integer(pred$pred)
+  rmse[i] = analysis$rmse(pred, val$y)
+  i = i + 1
+}
+
+ggplot() + geom_line(aes(x=x, y=rmse)) + 
+           xlab('k') + 
+           ylab('Validation RMSE') +
+           ggtitle('k-Nearest Neighbors Grid Search')
+```
+
+It looks like *k = 23* is the best, even though it is still well below our standards, with RMSE above 1.395. We should expect the test set to perform similarly. Therefore, we should keep in mind that this prediction should only serve as a level one model, and not the final model.
+
+## Testing 1, 2, 3...
+
+Now let's run the final thing.
+
+```{r, eval=FALSE}
+train$X = rbind(train$X, val$X)
+train$y = c(train$y, val$y)
+
+k = 23
+for (i in 1:501) {
+  paste("\nk:", k, "batch:", i, "\n", sep=' ') %>% cat()
+  run.knn(test, k, i, final=TRUE)
+}
+
+pred = read.csv('knn_23_wv_preds_final.csv')$pred
+params = list(csv = 'submit/submit_knn_wv_final_k23.csv')
+submit = trainfuncs$submit(pred, params)
+```
+

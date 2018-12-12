@@ -1,0 +1,68 @@
+---
+title: "Factor Review Set"
+author: "Jonathan Chang"
+date: "October 31, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+```
+
+## Motivation
+
+'train_reviews.csv' is by far the largest file. Most of it is the review text, yet it's questionable how we should use this. The review text is not present in the validation or test set, so we would have to predict the text to generate it. Otherwise, it could be used to identify user similarities, although most algorithms deal with explicit data (i.e. star rating), and the review text seems redundant with the ratings in hand.
+
+To reduce file size, we set aside the text for now, so we could use it in the future it necessary, and it doesn't impede our current business by taking up memory unnecessarily.
+
+```{r}
+reviews = read.csv('reviews_simplified.csv')
+text = reviews$text
+rid = seq.int(nrow(reviews))
+text_df = data.frame(rid, text)
+colnames(text_df) = c("rid", "text")
+```
+
+And we save this so we don't have to worry about spamming the delete button.
+```{r, eval=FALSE}
+write.csv(text_df, 'review_text.csv', row.names=FALSE)
+```
+
+Now we can greatly simplify the reviews set by doing several things:
+
+* Removing the text field
+* Replacing review_id with a numerical sequence
+* Converting dates to a numerical representation
+* Normalizing large numbers
+
+Note: The first user in our set signed up on 10/12/2004.
+
+```{r}
+reviews$text = NULL
+
+reviews$rid = rid
+reviews$review_id = NULL
+
+reviews$date = as.integer(as.Date(reviews$date) - 
+                            as.Date('2004-10-12'), units="days")
+
+numeric_cols = c("cool", "date", "funny", "useful")
+reviews[,numeric_cols] = round(scale(reviews[,numeric_cols]), 4)
+```
+
+Now we can save our perfectly simplified review set.
+```{r, eval=FALSE}
+write.csv(reviews, 'reviews_clean.csv', row.names=FALSE)
+```
+
+Let's compare file sizes. Now it should be much easier to work with.
+
+```{r}
+orig_size = round(file.size('train_reviews.csv')/1000000, 2)
+new_size = round(file.size('reviews_clean.csv')/1000000, 2)
+```
+```{r, echo=FALSE}
+paste("Users:", orig_size, "MB -->", new_size, "MB\n",
+      sep=' ') %>% cat()
+```

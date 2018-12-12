@@ -1,0 +1,200 @@
+---
+title: "Clean Business: Second Attempt at Feature Reduction (Part 5)"
+author: "Jonathan Chang"
+date: "November 10, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+```
+
+## Business with Categories
+
+Previously, we converted all our categories to vectors with PCA. However, we might want to take a more comprehensive approach and encode all columns. So let's reconstruct the categories.
+
+```{r}
+business = read.csv('business_preclean4.csv')
+pca_cols = grepl("cat_", colnames(business))
+business[, pca_cols] = NULL
+catframe = read.csv('catframe.csv')
+business = cbind(business, catframe)
+rm(catframe)
+dim(business)
+```
+```{r, eval=FALSE}
+write.csv(business, 'business_cats.csv', row.names=FALSE)
+```
+
+## Label Encoding
+
+A lot of algorithms don't know how to interpret factors. A popular approach, then, is to convert factors to numerical data in what's called *label encoding*. This works well especially with trees, since they have the ability to make multiple splits along the same feature that could take care of any ordering problems (since label encoding causes implicit ordering relations between the numbers that may not exist in categorical data). 
+
+```{r}
+business = read.csv('business_cats.csv')
+factor_cols = names(Filter(is.factor, business))
+business[, factor_cols] = apply(business[, factor_cols], 2,
+                          function(c) { match(c, unique(c)) })
+dim(business)
+```
+
+```{r, eval=FALSE}
+write.csv(business, 'business_labels.csv', row.names=FALSE)
+```
+
+## One-Hot Mess
+
+Some tree algorithms like XGBoost use a gradient-based approach instead of information gain like a typical decision tree, so the ordering isn't completely ignored. This is also true for distance based algorithms like linear or logistic regression.
+
+The second approach is *one-hot encoding*, or splitting each categorical feature into *n* features representing each of the values (i.e. categories) that it takes. However, the problem here is obvious. In addition to our 799 categories, we have 250 locations, and between 3-5 values in each of our attributes. Each one-hot feature will mostly contain zeroes. The problem with having overly sparse data is:
+
+1. Some algorithms will perform worse.
+2. It will take up a lot of memory. This can be partially solved with a sparse matrix representation, but then it causes the overhead of converting back and forth between formats.
+3. It increases training time. In trees, the algorithm has to look through each feature to find the best splits. In regression, we have more weights for the same information content.
+
+In fact, let's create our one-hot encodings to see just how big it gets. Note that the categories are already one-hot in their current format, and the business hours, dates and counts are numeric. That means we just have to one-hot encode the attributes and location. Looking through the dataset, we find that all the attributes and location happen to be the first columns. So we'd like to find which columns to subset.
+
+```{r, warning=FALSE, message=FALSE}
+library(caret)
+business = read.csv('business_cats.csv')
+city_col = which(names(business)=="city")
+dummy = dummyVars(~., data=business[,1:city_col], fullRank=TRUE)
+one_hots = as.data.frame(predict(dummy, newdata=business[,1:city_col]))
+business[,1:city_col] = NULL
+```
+
+Full rank regards the *dummy variable trap*. If we keep all the variables in a one-hot encoding, then since the combination of *n-1* columns fully describe the last category by process of elimination, it causes multicollinearity (i.e. dependency). So usually, we remove the last column. In this case, I want to keep all the columns so I can later manually remove the columns labeled "None", to make it neater.
+
+```{r}
+one_hots$`city.Peoria, AZ` = NULL # only has 1 sample
+one_hots[, grepl("None", names(one_hots))] = NULL
+business = cbind(one_hots, business)
+dim(business)
+```
+
+`r ncol(business)` columns is actually not that bad.
+
+```{r, eval=FALSE}
+write.csv(business, 'business_onehot.csv', row.names=FALSE)
+```
+
+## Preserving Relations
+
+The problem with one-hot encoding is that it also fails to preserve relations. For example, the hypothetical categories *music_Dj* and *music_Live* are certainly closer to each other than *music_Dj* and *Nebraska*, yet one-hot columns look all the same to the algorithm. While label encoding adds relations that don't exist, one-hot encoding eliminates all relations besides patterns intrinsic in the data. A PCA feature reduction based on one-hot encodings doesn't help since it's still based on one-hot encodings. Further, it hypothetically there is a feature that is 100% correlated to a 1-star rating, but the lack of that feature has no specific pattern, then it would appear to be low variance, eliminated by PCA.
+
+Still, let's make a set reduced by PCA.
+
+```{r}
+business = read.csv('business_onehot.csv')
+
+# Set aside numerical columns.
+numerical_cols = business[,340:358]
+business[,340:358] = NULL
+
+# Train PCA on categorical columns.
+pca.model = prcomp(business, scale=TRUE)
+pca.variance = summary(pca.model)$importance[3,]
+```
+
+This time we'll keep 0.8 variance.
+
+```{r}
+num_vectors = table(pca.variance < 0.8)["TRUE"]
+pca.vector = pca.model$rotation[, 1:num_vectors]
+pca.final = as.data.frame(as.matrix(business) %*% pca.vector)
+
+# Save space
+pca.final = round(pca.final, 4)
+
+# Save dataframe
+business = cbind(numerical_cols, pca.final)
+dim(business)
+```
+
+Now we're down to a little over a half of the one-hot columns.
+
+```{r, eval=FALSE}
+write.csv(business, 'business_pca.csv', row.names=FALSE)
+```
+
+Let's look at a different embedding that preserves some relations.
+
+## Word2Vec
+
+*Word2Vec* is typically used in NLP (peuro-linguistic programming) applications to preserve meaning between words. We'll consider the *skip-gram* variant that takes as input sentences and tries to predict the most likely word. Word2Vec does this using a shallow one-layer neural network by taking windows of size *n* and considering each word as a feature. The neural network then learns the context from each window. The resulting number of features is the size of the hidden layer.
+
+While this isn't typically applied to categorical data, its use has been explored in academia. After all, there is an analogy here, right? If we take each category as a word, then the combination of categories representing each business forms a sentence, or a window. We then learn the context between the categories, preserving relations while reducing the feature dimension. Some have called this Category2Vec, but all the *X*2Vec imply the same algorithm with different feature types. A leading edge variant by Facebook called *FastText* breaks words down to *n*-grams to learn, also, parts of each word to predict unknown similar words -- but since our data set is pretty well curated, this should not be an issue. Categorical data are rarely overlapped (e.g. "dj" is pretty distinct from "vegetarian"), and if there are overlaps, we can append prefixes to make them distinguishable if necessary.
+
+Let's convert column names into words.
+
+```{r}
+business = read.csv('business_onehot.csv', stringsAsFactors=FALSE)
+
+# Set aside numerical columns.
+numerical_cols = business[,340:358]
+business[,340:358] = NULL
+
+# Format column names
+cols = colnames(business)
+cols = gsub(' ', '', cols, fixed=TRUE)
+cols = gsub(',', '', cols, fixed=TRUE)
+cols = gsub('.', '', cols, fixed=TRUE)
+cols = gsub('-', '', cols, fixed=TRUE)
+```
+
+Next, we convert each sample into a sentence of column names.
+
+```{r}
+sentences = apply(business, 1, function(sample) {
+  sample = ifelse(sample != 0, cols, '')
+  gsub("\\s+", " ", trimws(paste(sample, collapse=' ')))
+})
+sentences[1]
+```
+
+Finally, we train these sentences with Word2Vec. h2o will run on a local Java server so that it's faster.
+
+```{r, warning=FALSE, message=FALSE}
+library(h2o)
+```
+```{r}
+h2o.init()
+```
+```{r, results='hide'}
+sentences = as.h2o(sentences)
+sentences = h2o.ascharacter(sentences)
+sentences = h2o.tokenize(sentences, ' ')
+```
+
+We'll use a hidden layer size of 400 because the authors of the paper recommended 300-400.
+
+```{r, eval=FALSE}
+w2v = h2o.word2vec(sentences,
+                   model_id="word2vec_400",
+                   min_word_freq=1,
+                   word_model="SkipGram",
+                   vec_size=400,
+                   window_size=7,
+                   sent_sample_rate=0,
+                   epochs=100)
+h2o.saveModel(w2v, 'models/')
+```
+```{r, echo=FALSE}
+w2v = h2o.loadModel('models/word2vec_400')
+```
+
+Applying the model to our categories, we get...
+
+```{r}
+text.vecs = h2o.transform(w2v, sentences, 
+                          aggregate_method='AVERAGE')
+business = cbind(numerical_cols, as.data.frame(text.vecs))
+dim(business)
+```
+
+```{r, eval=FALSE}
+write.csv(business, 'business_wv.csv', row.names=FALSE)
+```
+
+Obviously, there are a lot of hyperparameters here that can be tuned, but it's too much work to tune hyperparameters for each method here, and on each model. Let's figure out which of these methods are competitive first before tuning them further. This is imperfect because ideally we want to do a grid search of all parameters in case one setting might greatly improve RMSE, but this is a tradeoff between time and results. To be sure, when we find that we can no longer push the frontiers with better models, we might revisit all these things that we've skipped to iron out the kinks.

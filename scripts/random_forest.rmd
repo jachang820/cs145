@@ -1,0 +1,314 @@
+---
+title: "That Was Random!"
+author: "Jonathan Chang"
+date: "November 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("../"))
+library(dplyr)
+```
+```{r, warning=FALSE, message=FALSE}
+source('scripts/error_analysis.r')
+source('scripts/training_fcts.r')
+```
+
+## Preprocessing
+
+Random forest (and trees in general) is the one model where PCA would throw it off and make it take forever, since it must calculate probabilities for every value -- and they all look different! It's also the one model that should be able to deal with numerical factors since all it has to do is make splits down each feature. Therefore, just this one time, we'll replace the PCA columns with the 799 categories, and keep all the other business attributes as factors. After this, we'll be using the processed version and one-hot encoding for most of the other models, like linear regression and neural networks, etc.
+
+```{r}
+users = trainfuncs$read.csv('users_clean.csv')
+business = trainfuncs$read.csv('business_cats.csv')
+train = trainfuncs$read.csv('reviews_clean.csv')
+train = train[, c("uid", "bid", "stars")]
+val = trainfuncs$read.csv('validate_simplified.csv')
+test = trainfuncs$read.csv('test_simplified.csv')
+```
+
+Now we will join the columns into a training set. After, we get rid of the ID columns since we do not want to include them in the training process.
+
+```{r, warning=FALSE}
+train = trainfuncs$join_sets(train, split=FALSE)
+val = trainfuncs$join_sets(val, split=TRUE)
+test = trainfuncs$join_sets(test, split=FALSE)
+```
+
+Let's load some libraries.
+```{r, warning=FALSE, message=FALSE}
+library(caret)
+library(ranger)
+library(e1071)
+```
+
+## Beware of slow packages
+
+**WARNING: Don't run the code chunk below.**
+The *caret* package provides a unified interface for dozens of models. It's also an easy way to run repeated cross-validation or bootstrapping across a variety of tunable parameters, and will evaluate the best model by some metric after a grid or random search.
+
+```{r, eval=FALSE}
+fitControl = trainControl(classProbs = TRUE)
+rf = train(stars ~ ., data=train, method='ranger',
+           trControl=fitControl,
+           importance='impurity')
+pred = predict(rf, newdata=val)
+```
+
+The code above ran for 3 days with no sign of ending. Although randomforest will prune features by default, With the size of the training set, each run took half a day to a day. The default values for caret was to run boostrapping 10 times with 10 repeats, and select parameters *mtry*, *min.node.size*, and *splitRule* 3 times each, with a total of 900 runs. This will give us a better model, but time restriction and processing power of my computer is limited.
+
+## Seeing the trees for the forest
+
+**Note:** After training all the random forest models, I realized I had *NA*'s in my business data set that made R import them as factors instead of numbers. Since it's too involved to re-run the entire process, I am just going to train the final model on the fixed dataset. Therefore, the RMSE values hereforth presented should be slightly off, although it shouldn't be major.
+
+Hyperparameter | Explanation
+-------------- | -----------
+mtry | Number of features randomly selected to train each tree.
+min.node.size | Minimum samples the leaves of the trees represent. This indirectly affects the height of the trees.
+importance | Criteria of feature selection.
+splitrule | Criteria of making splits.
+
+For that reason, we will run the underlying function below with a more basic grid search of recommended values, given by this paper, *Hyperparameters and Tuning Strategies for Random Forest*, by Probst, Philipp, et. al.: https://arxiv.org/pdf/1804.03515.pdf.
+
+But first let's see how long a single run takes. :)
+
+```{r}
+p = ncol(train)
+trainfuncs$set_alg_name('ranger')
+default_params = list(write.forest = TRUE,
+                      classification = FALSE,
+                      verbose = TRUE,
+                      mtry = round(sqrt(p)),
+                      min.node.size = 5,
+                      importance = "impurity",
+                      splitrule = "variance",
+                      respect.unordered.factors=FALSE)
+train_fct = ranger
+predict_fct = predict
+params = trainfuncs$get_params()
+
+## Shorten train.predict for this scope.
+train.predict = function(data, params, 
+                         newdata=val$X, label=val$y) {
+  train_args = list(formula=stars ~ ., data)
+  trainfuncs$train.predict(train_args, params,
+                           newdata=newdata, label=label,
+                           pred_obj="predictions")
+}
+```
+```{r, eval=FALSE}
+pred = train.predict(train, params)
+```
+```{r, echo=FALSE, warning=FALSE}
+# This chunk is the same as the one above, except
+# it recalls a saved model.
+p = ncol(train)
+rf = readRDS(params$rds)
+pred = predict_fct(rf, val$X)
+rmse = analysis$rmse(pred$predictions, val$y)
+```
+
+```{r, echo=FALSE}
+paste("RMSE is ", rmse, ".", sep='') %>% cat()
+```
+
+20 minutes is better than half a day (it turns out *mtry* proportionately affects training time). Unfortunately, prediction isn't any better than before. We can at least visualize what it thinks are important features.
+
+```{r}
+importance = data.frame(names(rf$variable.importance),
+                           rf$variable.importance)
+colnames(importance) = c("feature", "importance")
+library(ggplot2)
+ggplot(importance[1:20,], aes(x=reorder(feature, importance),
+      y=importance, fill=importance)) + 
+      geom_bar(stat="identity", position="dodge") + coord_flip() +
+      ylab("Variable Importance") +
+      xlab("") +
+      ggtitle("Important Variables")
+```
+
+The paper recommends $\text{mtry}=\frac{p}{3}$, where *p* is the number of features, for regression trees. But a quick test showed that setting that value that large will take 12 hours to run per model. So while we might run that once at the end to test for improvement, we will not be using that value for grid search. So... let's get to it!
+
+```{r, eval=FALSE}
+mtry = c(round(sqrt(p)), 2 * round(sqrt(p)))
+min.node.size = c(5, 10)
+importance = c("impurity", "permutation")
+splitrule = c("variance", "extratrees")
+p_grid = expand.grid(mtry=mtry,
+                     min.node.size=min.node.size,
+                     importance=importance,
+                     splitrule=splitrule,
+                     stringsAsFactors = FALSE)
+for (i in 1:nrow(params)) {
+  paste("Trial", i, "...\n", sep=' ') %>% cat()
+  params = do.call(trainfuncs$get_params, p_grid[i, ])
+  pred = train.predict(train, params)
+}
+```
+
+Now for the moment of faith!
+
+```{r}
+best = trainfuncs$best_params(upper=16, verbose=TRUE)
+```
+
+We notice signs of overfitting in that a larger *min.node.size* seems to consistently lead to a better score. Let's try pushing that angle to see if it improves further.
+
+```{r, eval=FALSE}
+best$min.node.size = 15
+params = do.call(trainfuncs$get_params, best)
+pred = train.predict(train, params)
+```
+
+```{r}
+best = trainfuncs$best_params(upper=17, verbose=TRUE)
+```
+
+That was a very minor improvement. Since we know that *min.nodes.size* increases bias, we should lean towards it when we increase *mtry*, which increases variance, as a balancing mechanism. The recommended *mtry* for regression trees is p/3, let's see how that works.
+
+```{r, eval=FALSE}
+params = trainfuncs$get_params(min.node.size=10, mtry=round(p/3))
+pred = train.predict(train, params)
+```
+
+Our best params are now **drumroll**
+
+```{r}
+best = trainfuncs$best_params(upper=18, verbose=TRUE)
+```
+
+That's what we want to see! But let me just increase *mtry* incrementally as a sanity check.
+
+```{r, eval=FALSE}
+params = trainfuncs$get_params(min.node.size=10, mtry=100)
+pred = train.predict(train, params)
+```
+```{r, echo=FALSE}
+par = read.csv('ranger_grid.csv')[1:19,]
+rmse = par[nrow(par), "rmse"]
+paste("RMSE is ", rmse, ".", sep='') %>% cat()
+```
+
+So there is a nice logarithmic improvement from 30, 60, 100, to 306. There's a chance that an even higher *mtry* could improve RMSE more, or it might overfit. We'll try to squeeze one more drop.
+
+```{r, eval=FALSE}
+params = get_params(min.node.size=10, mtry=round(2*p/3))
+pred = train.predict(train, params)
+```
+```{r}
+best = trainfuncs$best_params(upper=20, verbose=TRUE)
+```
+
+So it looks like the latest run probably overfit, as it got slightly, insignificantly worse (since we've previous testing shown a bit of variation between each run). From here, we'll use the intuition we've gathered and leverage AWS to do an extensive grid search for the optimal value.
+
+## Grid search
+
+```{r, eval=FALSE}
+best$respect.unordered.factors = TRUE
+best$mtry = NULL
+best$min.node.size = NULL
+p_grid = expand.grid(
+  mtry=c(round(0.9*p/3), round(p/3), round(1.1*p/3)),
+  min.node.size=c(15, 18, 21, 24, 27, 30, 33, 40))
+for (i in 1:nrow(p_grid)) {
+  params = do.call(trainfuncs$get_params, c(p_grid[i, ], best))
+  pred = train.predict(train, params)
+}
+```
+```{r}
+best = trainfuncs$best_params(verbose=TRUE)
+```
+
+## It's the final countdown
+
+Let's look at the results of our grid search.
+
+```{r, warning=FALSE, message=FALSE}
+library(plotly)
+p_grid = read.csv(paste(default_params$alg_name, "grid.csv", sep='_'))
+p_grid = p_grid[which(p_grid$respect.unordered.factors), ]
+threshold = 1.058
+interval = threshold - min(p_grid$rmse)
+scale = 242 / interval
+reds = ifelse(p_grid$rmse > threshold, 0.95, 
+              0.95 - (threshold - p_grid$rmse) * scale/255)
+sizes = ifelse(p_grid$rmse > threshold, 3, 
+               (threshold - p_grid$rmse) * 2500 + 3)
+colors = rgb(1, reds, reds)
+p = plot_ly(p_grid, x=~min.node.size, y=~mtry, mode='markers',
+            marker=list(size=sizes, color=colors)) %>% 
+  add_markers() %>%
+  layout(title="RMSE<br>(larger, redder is better)")
+p
+```
+
+We can see that along *mtry=[276,306]*, increasing *min.node.size* is better. So we'll make submissions along that vector.
+
+To train our final model, we should include the validation set so we have more data to make our predictions more generalizable.
+
+Choo-choo!
+
+```{r, eval=FALSE}
+val = val$X
+val$stars = val$y
+combined = rbind(train, val)
+best = trainfuncs$best_params(verbose=FALSE)
+best$final = TRUE
+for (i in 1:8) {
+  nodes = c(15,18,21,24,27,30,33,40)
+  best$min.node.size = nodes[i]
+  params = do.call(trainfuncs$get_params, best)
+  pred = train.predict(combined, params)
+}
+```
+
+The score with business hours as factors and *min.node.size=15* is **1.05812**. With the bug fixed and business hours converted to numbers, we got a whopping **1.05800**. I guess business hours isn't a big deal. However, as the validation score showed, increasing to *min.node.size=24* achieved **1.05620**, and *min.node.size=30* achieved **1.05566**, and *min.node.size=40* achieved **1.05511**. Although we can go further, it's clear it's approaching an asymptote, maybe near 1.054. So let's call it quits while we're ahead.
+
+## Fixing mistakes
+
+There was a mistake in one of the earlier sections that may have negatively impacted our random forest models. Before, we made the executive decision to replace all *NA*'s with *None*, so that they can be seen as categorical data and no samples are dropped (as many algorithms simply ignore any samples with *NA*). We neglected that some features would have been seen as numerical if not for a few *None*'s sprinkled around the dataset. Particularly, the opening and closing hours, I assumed would have been imported as numeric, but were actually imported as factors, which ruined the ordering of the actual numbers (since factors representations are arbitrarily assigned). 
+
+Since we centered and scaled all our data, it would be inconvenient to fix it here, so I fixed it in one of the prior steps (Opening Hours), and re-trained only the final random forest model.
+
+## Analysis
+
+### Random Forest
+
+We're going to use the functions we developed above to analyze the error of random forest predictions on the validation set (so, not our final model, but the one without validation samples). Then, we'll compare this model to the user mean baseline.
+
+```{r}
+rf = readRDS('models/ranger_final_40_306_respec.rds')
+pred = trainfuncs$predict(rf, newdata=val$X, pred_obj="predictions")
+rf_score = analysis$rating_score(pred, val$y)
+rf_score
+```
+
+We notice first the high precision on 1 and 5. These mean most of the samples we predicted to be 1 and 5 are actually 1 and 5, respectively. However, low recall means we are missing a lot of 1 and 5 star ratings. This is likely due to that half as many numbers $x \in \mathcal{R}$ are rounded to these classes. Low recall for 2 stars means we are also missing a lot of 2 star ratings. Most likely these go to 3 stars, we can tell by the low 3-star precision showing overestimation. Likewise, many 3 stars are predicted 2 or 4 stars. With this model, all the classes are being underestimated except for 4-star ratings, which happen to be most popular. The F1 measure of 4 and 5 stars similar, so the precision in one is traded for recall of the other. In other words, a lot of the 4 stars likely belong to the 5-star class.
+
+We can see that just looking at the accuracy, which is highest in 1 and 2 stars, is misleading. Most of that accuracy goes to false negatives. Because 1 and 2 stars make up much smaller proportion of the overall set (i.e. the classes are skewed), this favors accuracy.
+
+All in all, random forest seems to greatly underestimate the edge numbers, and make a lot of mistakes in the middle ones.
+
+### User Mean
+
+Let's analyze the user mean (the first submission).
+
+```{r}
+val = trainfuncs$read.csv('validate_simplified.csv')
+unnormed_stars = trainfuncs$read.csv('users.csv')$average_stars
+users = trainfuncs$read.csv('users_clean.csv')[,c("uid","average_stars")]
+users$average_stars = unnormed_stars
+val = inner_join(val, users, by='uid')
+mean_score = analysis$rating_score(val$average_stars, val$stars)
+mean_score
+```
+
+There's a very similar pattern here, so let's compare the two.
+
+```{r}
+analysis$score_dist(rf_score, mean_score)
+```
+
+As observed, differences are minor, but keep in mind that these minor differences are enough to increase RMSE by `r 1.05812 - 1.13383`. The overall positive F1 measure might be an indication. Random forest actually has slightly worse precision on the edges, so it is predicting more 1 and 5 stars when they are not. It also has worse recall on 4 stars, or predicting less 4 stars than there actually are, compared to the user mean.
+
+Anyways, the similarity of these models make them unsynergistic. When we produce models that differ drastically, they can be stacked together to take advantage of both their strengths.

@@ -1,0 +1,146 @@
+---
+title: "Error Analysis"
+author: "Jonathan Chang"
+date: "November 9, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+library(ranger)
+```
+
+## Motivation
+
+Before we start training models in earnest, we should come up with some way to evaluate them. Two models with the same RMSE score are not the same. Some models might perform better for certain subsets. It is useful to analyze exactly where the models succeeded and failed for several reasons:
+
+* To learn more about the data.
+* To see what we can focus on to improve predictions.
+* To have an idea the decision boundaries for stacking models for an ensemble.
+
+The last point is a bit ambitious, but not out of hand.
+
+We should develop a suite of functions that could easily be used by future models to contrast prediction ability.
+
+## Helpers
+
+Since R Markdown root path normalizations don't apply to the console, these functions might help for debugging purposes.
+
+```{r}
+console.read_csv = function(fname, stringsAsFactors=TRUE) {
+  wd = getwd()
+  setwd(working_dir)
+  csv = read.csv(fname, stringsAsFactors=stringsAsFactors)
+  setwd(wd)
+  csv
+}
+
+console.write_csv = function(obj, fname, row.names=FALSE) {
+  wd = getwd()
+  setwd(working_dir)
+  write.csv(obj, fname, row.names=row.names)
+  set(wd)
+}
+
+console.read_RDS = function(fname) {
+  wd = getwd()
+  setwd(working_dir)
+  model = readRDS(fname)
+  set(wd)
+  model
+}
+
+working_dir = getwd()
+files_list = list.files()
+console.getwd = function() { working_dir }
+console.setwd = function(wd) { setwd(wd) }
+console.list_files = function() { files_list }
+```
+
+Formalizations of the objective.
+
+```{r}
+sq_error = function(y_pred, y) {
+  (y_pred - y)^2
+}
+
+rmse = function(y_pred, y) {
+  sqrt(mean(sq_error(y_pred, y)))
+}
+```
+
+## Strengths and weaknesses
+
+Although this turned out to be a regression problem due to the objective metric, in the real application, Yelp, users can only rate discrete number of stars between 1-5 inclusive. It might be useful to see the actual stars the model succeeds or fails at predicting. We'll say that prediction is $\hat{y}_{\text{pred},i} = y_i$ if $|y_{\text{pred},i} - y_i| \leq 0.5$.
+
+```{r}
+rating_confusionMatrix = function(y_pred, y, rating) {
+  y_pred = round(as.numeric(y_pred))
+  tab = table(y_pred != rating, y != rating)
+  conf = list()
+  conf$TP = tab[1, 1]
+  conf$FP = tab[1, 2]
+  conf$FN = tab[2, 1]
+  conf$TN = tab[2, 2]
+  conf
+}
+
+confusion = function(y_pred, y) {
+  conf = data.frame()
+  for (i in 1:5) {
+    cm = rating_confusionMatrix(y_pred, y, i)
+    conf[i, "TP"] = cm$TP
+    conf[i, "FP"] = cm$FP
+    conf[i, "FN"] = cm$FN
+    conf[i, "TN"] = cm$TN
+  }
+  conf
+}
+
+rating_accuracy = function(conf) {
+  (conf$TP + conf$TN) / rowSums(conf)
+}
+
+rating_precision = function(conf) {
+  conf$TP / (conf$TP + conf$FP)
+}
+
+rating_recall = function(conf) {
+  conf$TP / (conf$TP + conf$FN)
+}
+
+rating_fscore = function(conf) {
+  pre = rating_precision(conf)
+  rec = rating_recall(conf)
+  (2 * pre * rec) / (pre + rec)
+}
+
+rating_score = function(y_pred, y) {
+  conf = confusion(y_pred, y)
+  accuracy = rating_accuracy(conf)
+  precision = rating_precision(conf)
+  recall = rating_recall(conf)
+  fscore = rating_fscore(conf)
+  data.frame(accuracy, precision, recall, fscore)
+}
+```
+
+Okay, but what if we want to compare two models? Let's do that.
+
+```{r}
+score_dist = function(score1, score2) {
+  score1-score2
+}
+```
+
+That was underwhelming. 
+
+## Interpretation
+
+* **Accuracy** is the rate of correct predictions.
+* **Precision** is the rate of true predictions that are actually true.
+* **Recall** is the rate of actually true samples predicted true.
+* **F-Score** reveals the best balance of precision and recall.
+
+Note that low precision corresponds to high *Type I* error, or false alarm. We'd be saying something is true when it isn't. Low recall corresponds to high *Type II* error, or false negative. We'd be saying something is false when it isn't. Therefore, low precision means we're overestimating that class, and low recall means we're underestimating that class. If both are low, then we have low accuracy in terms of true predictions.

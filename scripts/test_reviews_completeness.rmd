@@ -1,0 +1,85 @@
+---
+title: "Test the Completeness of Reviews"
+author: "Jonathan Chang"
+date: "October 31, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+```
+
+## The Problem
+
+It should be immediately obvious that the data contained in 'train_reviews.csv' have limited usefulness if it doesn't pertain to users and businesses in the test or validation set. If it's not useful, we may not want to waste time processing the review text.
+
+## Load the relevant data
+
+We remove review text to improve processing speed, since we are not working with that field at this moment.
+
+```{r}
+reviews = read.csv('train_reviews.csv')
+validate = read.csv('validate_queries.csv')
+test = read.csv('test_queries.csv')
+reviews$text = NULL
+```
+```{r, echo=FALSE}
+paste("There are", nrow(reviews), "reviews,",
+      nrow(validate), "validation queries, and",
+      nrow(test), "test queries.", sep=' ') %>% cat()
+
+```
+
+## Non-unique Users
+
+First, we can find the number of queries in the validation and test set by users that we do not have reviews for.
+
+```{r, warning=FALSE}
+non_unique_val = nrow(anti_join(validate, reviews, by="user_id"))
+non_unique_test = nrow(anti_join(test, reviews, by="user_id"))
+```
+```{r, echo=FALSE}
+paste("There are", non_unique_val, "validation queries and",
+      non_unique_test, "test queries with users we don't have",
+      "reviews for. That's,", round(non_unique_val*100/nrow(validate), 2),
+      "% and", round(non_unique_test*100/nrow(test), 2), 
+      "% respectively.", sep=' ') %>% cat()
+```
+
+## Unique Users
+
+We might also want to find how many unique users this represent.
+
+```{r, warning=FALSE}
+validate_users = as.data.frame(unique(validate$user_id))
+test_users = as.data.frame(unique(test$user_id))
+colnames(validate_users) = c("user_id")
+colnames(test_users) = c("user_id")
+unique_val = nrow(anti_join(validate_users, reviews, by="user_id"))
+unique_test = nrow(anti_join(test_users, reviews, by="user_id"))
+```
+```{r, echo=FALSE}
+paste("There are", unique_val, "users in validation and", unique_test,
+      "users in test we don't have reviews for. That's,",
+      round(unique_val*100/nrow(validate_users), 2), "% and",
+      round(unique_test*100/nrow(test_users), 2), "% respectively.",
+      sep=' ') %>% cat()
+```
+We might also want to find out how many test queries lack both user and business in reviews.
+```{r, warning=FALSE}
+test_business = as.data.frame(unique(test$business_id))
+shutout = test[!(test$user_id %in% reviews$user_id),]
+shutout = shutout[!(shutout$business_id %in% reviews$business_id),]
+num_shutout = nrow(shutout)
+shutout_users = length(unique(shutout$user_id))
+shutout_business = length(unique(shutout$business_id))
+```
+```{r, echo=FALSE}
+paste("There are", num_shutout, "test queries without both users and",
+      "businesses in the review set. This corresponds to",
+      shutout_users, "(", round(shutout_users*100/nrow(test_users), 2),
+      "%) unique users and", shutout_business, "(",
+      round(shutout_business*100/nrow(test_business), 2), "%) unique", 
+      "businesses.", sep=' ') %>% cat()
+```

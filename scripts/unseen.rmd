@@ -1,0 +1,278 @@
+---
+title: "Seen and Unseen Data"
+author: "Jonathan Chang"
+date: "December 6, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("../"))
+```
+
+```{r, warning=FALSE, message=FALSE}
+source('scripts/training_fcts.r')
+source('scripts/error_analysis.r')
+```
+
+Previously we determined that a large portion of validation and test sets have users not in our training set. We'll revisit and determine if it's useful to use different models for seen and unseen data.
+
+```{r}
+users = trainfuncs$read.csv('users_clean.csv')
+val = trainfuncs$read.csv('validate_simplified.csv')
+test = trainfuncs$read.csv('test_simplified.csv')
+
+business = trainfuncs$read.csv('business_onehot.csv')
+val_onehot = trainfuncs$join_sets(val, split=FALSE)
+test_onehot = trainfuncs$join_sets(test, split=FALSE)
+
+# For linear regression
+business = trainfuncs$read.csv('business_wv.csv')
+val_wv = trainfuncs$join_sets(val, split=FALSE)
+val_wv$compliment_cool = NULL
+test_wv = trainfuncs$join_sets(test, split=FALSE)
+test_wv$compliment_cool = NULL
+
+# For random forest
+business = trainfuncs$read.csv('business_labels.csv')
+val_labels = trainfuncs$join_sets(val, split=FALSE)
+test_labels = trainfuncs$join_sets(test, split=FALSE)
+```
+
+First we'll split validation and test sets into 4 categories:
+
+* Records with both user and business in the training set.
+* Records with user but not business in the training set.
+* Records with business but not user in the training set.
+* Records with neither user or business in the training set.
+
+```{python}
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('reviews_clean.csv')
+train = train[['uid', 'bid', 'stars']]
+val = pd.read_csv('validate_simplified.csv')
+test = pd.read_csv('test_simplified.csv')
+combined = pd.concat([train, val], ignore_index=True)
+
+def separate(train, test):
+	seen_users = set(train['uid'].unique())
+	seen_business = set(train['bid'].unique())
+	seen_list = {'both': [], 'uid': [], 'bid': [], 'none': []}
+	for index, record in test.iterrows():
+		str_index = str(index + 1)
+		if record['uid'] in seen_users and record['bid'] in seen_business:
+			seen_list['both'].append(str_index)
+		elif record['uid'] in seen_users and record['bid'] not in seen_business:
+			seen_list['uid'].append(str_index)
+		elif record['uid'] not in seen_users and record['bid'] in seen_business:
+			seen_list['bid'].append(str_index)
+		else:
+			seen_list['none'].append(str_index)
+
+	return seen_list
+
+val_seen = separate(train, val)
+test_seen = separate(combined, test)
+
+def print_table(seen_list):
+	s = "Records with both users and businesses seen: {0}\n".format(len(seen_list['both']))
+	s = "{0}Records with only users seen: {1}\n".format(s, len(seen_list['uid']))
+	s = "{0}Records with only businesses seen: {1}\n".format(s, len(seen_list['bid']))
+	s = "{0}Records with neither users or businesses seen: {1}\n".format(s, len(seen_list['none']))
+	print(s)
+
+print_table(val_seen)
+print_table(test_seen)
+
+def write_seen(filename, seen_list):
+	with open(filename, 'a') as f:
+		f.write(','.join(seen_list['both']))
+		f.write('\n')
+		f.write(','.join(seen_list['uid']))
+		f.write('\n')
+		f.write(','.join(seen_list['bid']))
+		f.write('\n')
+		f.write(','.join(seen_list['none']))
+		f.write('\n')
+		
+write_seen('val_seen.csv', val_seen)
+write_seen('test_seen.csv', test_seen)
+```
+
+We've saved the results, the rows that belong to each set, in a file. Let's split validation and test sets accordingly.
+
+```{r}
+processFile = function(filepath, dataset) {
+  con = file(filepath, "r")
+  lines = readLines(con, n = 4)
+  lines = strsplit(lines, ',')
+  lines = lapply(lines, as.integer)
+  close(con)
+  y_ind = trainfuncs$which.index(dataset, "stars")
+  if (!is.null(y_ind)) {
+    y = dataset$stars
+    dataset = dataset[, -c(y_ind)]
+  }
+  result = list(full = list(X = dataset),
+                both = list(X = dataset[lines[[1]], ]),
+                uid = list(X = dataset[lines[[2]], ]),
+                bid = list(X = dataset[lines[[3]], ]),
+                none = list(X = dataset[lines[[4]], ]))
+  if (!is.null(y_ind)) {
+    result$full$y = y
+    result$both$y = y[lines[[1]]]
+    result$uid$y = y[lines[[2]]]
+    result$bid$y = y[lines[[3]]]
+    result$none$y = y[lines[[4]]]
+  }
+  result
+}
+
+val_onehot = processFile('val_seen.csv', val_onehot)
+val_wv = processFile('val_seen.csv', val_wv)
+val_labels = processFile('val_seen.csv', val_labels)
+test_onehot = processFile('test_seen.csv', test_onehot)
+test_wv = processFile('val_seen.csv', test_wv)
+test_labels = processFile('val_seen.csv', test_labels)
+```
+
+Let's load all the libraries we'll need. Note that CatBoost only works on Linux for now, so we'll do it separately on AWS.
+
+```{r, warning=FALSE, message=FALSE}
+library(ranger)
+library(RcppEigen)
+library(xgboost)
+library(h2o)
+h2o.init()
+```
+
+Now we'll go through each of our models and get RMSE scores in 5 categories:
+
+* Overall score
+* Score with users and business seen
+* Score with only users seen
+* Score with only businesses seen
+* Score with neither seen
+
+Let's get our model candidates.
+
+```{r}
+models_list = list.files('models/')
+models_list = models_list[!grepl('final', models_list)]
+models_list = models_list[-which(models_list == 'aml')]
+h2o_models = paste("aml/", list.files('models/aml/'), sep='')
+models_list = c(models_list, h2o_models)
+models_list = paste('models/', models_list, sep='')
+```
+
+Depending on the model name, we have to use different functions.
+
+```{r}
+RMSE_FILE = 'seen_rmse.csv'
+
+# Make one prediction on each of the subsets and write to file
+predict_sets = function(fname, splits, 
+                        predict = NULL, 
+                        pred_obj = NULL, 
+                        preprocess = NULL,
+                        loadmodel = readRDS) {
+  
+  if (is.null(predict)) {
+    predict = predict
+  }
+  cat(fname)
+  model = loadmodel(fname)
+  
+  pred_ = function(newdata, label) {
+    if (!is.null(preprocess)) {
+      newdata = preprocess(newdata)
+    }
+    pred = predict(model, newdata)
+    if (!is.null(pred_obj)) {
+      pred = pred[[pred_obj]]
+    }
+    analysis$rmse(pred, label)
+  }
+  
+  pred_data = list(filename = fname,
+                   full = pred_(splits$full$X, splits$full$y),
+                   both = pred_(splits$both$X, splits$both$y),
+                   user = pred_(splits$uid$X, splits$uid$y),
+                   business = pred_(splits$bid$X, splits$bid$y),
+                   none = pred_(splits$none$X, splits$none$y))
+  
+  if (trainfuncs$file.exists(RMSE_FILE)) {
+    trainfuncs$write.table(pred_data, RMSE_FILE, sep = ',',
+                           row.names = FALSE,
+                           col.names = FALSE,
+                           append = TRUE)
+  } else {
+    trainfuncs$write.table(pred_data, RMSE_FILE, sep = ',',
+                           row.names = FALSE,
+                           col.names = TRUE,
+                           append = FALSE)
+  }
+}
+
+# Make one prediction given model filename
+predict_one = function(filename, exclude = c("catboost")) {
+  excl = function(type) { !(type %in% exclude)}
+    
+  if (grepl("xgboost", filename) && excl("xgboost")) {
+    preprocess = function(newdata) {
+      xgboost::xgb.DMatrix(as.matrix(newdata))
+    }
+    predict_sets(filename, val_onehot,
+                 preprocess = preprocess)
+    
+  } else if (grepl("ranger", filename) && excl("ranger")) {
+    # Uses cats/labels
+    predict_sets(filename, val_labels,
+                 pred_obj = "predictions")
+    
+  } else if (grepl("linreg", filename) && excl("linreg")) {
+    # Uses wv
+    predict_fct = function(model, newdata) {
+      as.matrix(newdata) %*% coef(model)
+    }
+    predict_sets(filename, val_wv,
+                 predict = predict_fct)
+    
+  } else if (grepl("AutoML", filename) && excl("automl")) {
+    predict_fct = function(model, newdata) {
+      pred = h2o.predict(model, newdata)
+      as.vector(pred)
+    }
+    predict_sets(filename, val_onehot,
+                 predict = predict_fct,
+                 preprocess = as.h2o,
+                 loadmodel = h2o.loadModel)
+    
+  } else if (grepl("catboost", filename) && excl("catboost")) {
+    preprocess = function(newdata) {
+      catboost.load_pool(newdata, label="stars")
+    }
+    val_cat = val_labels
+    val_cat$full$X = catboost.load_pool(val_cat$full$X,
+                                        label = val_cat$full$y)
+    val_cat$both$X = catboost.load_pool(val_cat$both$X,
+                                        label = val_cat$both$y)
+    val_cat$uid$X = catboost.load_pool(val_cat$uid$X,
+                                        label = val_cat$uid$y)
+    val_cat$bid$X = catboost.load_pool(val_cat$bid$X,
+                                        label = val_cat$bid$y)
+    val_cat$none$X = catboost.load_pool(val_cat$none$X,
+                                        label = val_cat$none$y)
+    predict_sets(filename, val_labels,
+                 predict = catboost.predict,
+                 preprocess = preprocess)
+  }
+}
+```
+```{r, eval=FALSE}
+# Iterate through models list
+for (i in 1:length(models_list)) {
+  try(predict_one(models_list[i], exclude = c('catboost')))
+}
+```

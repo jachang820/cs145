@@ -1,0 +1,241 @@
+---
+title: "CatBoost"
+author: "Jonathan Chang"
+date: "11/29/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("../"))
+```
+```{r, eval=FALSE, warning=FALSE, message=FALSE}
+library(catboost)
+source("scripts/training_fcts.r")
+source("scripts/error_analysis.r")
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+source("scripts/training_fcts.r")
+source("scripts/error_analysis.r")
+```
+
+## Categorical Boost
+
+CatBoost was designed by Russian compoany Yandex and is supposed to work well on categorical data.
+
+```{r, eval=FALSE}
+users = trainfuncs$read.csv('users_clean.csv')
+business = trainfuncs$read.csv('business_cats.csv')
+train = trainfuncs$read.csv('reviews_clean.csv')
+train = train[, c("uid", "bid", "stars")]
+val = trainfuncs$read.csv('validate_simplified.csv')
+test = trainfuncs$read.csv('test_simplified.csv')
+
+train = trainfuncs$join_sets(train, split=TRUE)
+val = trainfuncs$join_sets(val, split=TRUE)
+test = trainfuncs$join_sets(test, split=FALSE)
+```
+
+CatBoost is compiled in C++, so we need to convert the data to its native format.
+
+```{r, eval=FALSE}
+train_pool = catboost.load_pool(data=train$X, label=train$y)
+val_pool = catboost.load_pool(data=val$X, label=val$y)
+test_pool = catboost.load_pool(data=test)
+```
+
+We set up the default values. There's a bunch of parameters that basically don't change, so we'll change the train function to include them and make it easier for us later on.
+
+```{r}
+trainfuncs$set_alg_name("catboost")
+```
+```{r, eval=FALSE}
+default_params = list(depth = 5,
+                      l2_leaf_reg = 0,
+                      random_strength = 0,
+                      bagging_temperature = 0,
+                      boosting_type = "Plain")
+
+train_args = list(learn_pool = train_pool,
+                  test_pool = val_pool)
+
+static_params = list(iterations = 1500,
+                     use_best_model = TRUE,
+                     eval_metric = "RMSE",
+                     loss_function = "RMSE",
+                     od_type = "Iter",
+                     od_wait = 25,
+                     verbose = 10)
+
+trainfuncs$train = function(train_args, params) {
+  arg = list(params=c(static_params, params$args))
+  arg = c(train_args, arg)
+  model = do.call(train_fct, arg)
+  catboost.shrink(model, model$tree_count)
+  params$rds = trainfuncs$enum_filename(params$rds)
+  saveRDS(model, params$rds)
+  model
+}
+
+train_fct = catboost.train
+predict_fct = catboost.predict
+
+params = trainfuncs$get_params()
+```
+
+First, we'll run an initial baseline prediction with default parameter values to see where we're at.
+
+```{r, eval=FALSE}
+pred = trainfuncs$train.predict(train_args, params,
+                                val_pool, val$y)
+```
+```{r}
+rmse_score = read.csv(trainfuncs$grid_file)[1, "rmse"]
+```
+
+The validation score was `r rmse_score`. Pretty admirable, definitely better out of the box than XGBoost. This was submitted to Kaggle and got a **1.05005** RMSE.
+
+There's fewer parameters here to tune (there are a lot of parameters in the library, but fewer major ones), but let's see if we can do better. The first step is to gauge how good we are in overfitting by tuning the depth. Recommended values are between 4-10, so we'll strive to keep it within that range.
+
+Hyperparameter | Explanation
+-------------- | -----------
+depth | Maximum depth of the tree.
+l2_leaf_reg | L2-norm regularization performed on leaf nodes.
+
+```{r, eval=FALSE}
+combos = list(depth=seq.int(4,12,2))
+pred = trainfuncs$train.predict(train_args, params,
+                         val_pool, val$y, combos=combos)
+```
+```{r}
+pgrid = read.csv(trainfuncs$grid_file)[1:6,]
+trainfuncs$plot_param(pgrid, "depth")
+```
+
+We found a depth of 8 to be a good start. As we tune regularization, it is conceivable that the optimal depth increases as a response. So let's fine tune depth at the same time.
+
+```{r, eval=FALSE}
+combos = list(depth=seq.int(7,11), 
+              l2_leaf_reg=c(0.001,0.01,0.1,0.5,1,2,3.5,5))
+pred = trainfuncs$train.predict(train_args, params,
+                         val_pool, val$y, combos=combos)
+```
+
+Let's see the relation between the parameters.
+
+```{r}
+pgrid = read.csv(trainfuncs$grid_file)[1:50,]
+trainfuncs$plot_param_grid(pgrid, c("depth", "l2_leaf_reg", "rmse"))
+trainfuncs$param_range(pgrid, "l2_leaf_reg")
+```
+
+
+We'll update the optimal L2 regularization based on these results.
+
+```{r}
+updates = list(depth = 8, l2_leaf_reg = 0.001)
+params = trainfuncs$get_params(updates = updates)
+```
+
+Let's fix our depth (since it would take too long to run a grid search on both parameters), and fine tune the regularization.
+
+```{r, eval=FALSE}
+combos = list(l2_leaf_reg=c(0.0005,0.00075,0.001,0.00125,
+                            0.0015,0.002,0.0025,0.003,0.0035,
+                            0.004,0.005,0.006))
+pred = trainfuncs$train.predict(train_args, params,
+                         val_pool, val$y, combos=combos)
+```
+```{r}
+pgrid = read.csv(trainfuncs$grid_file)[51:62,]
+trainfuncs$param_range(pgrid, "l2_leaf_reg")
+```
+
+Since the results appear inconclusive, we'll run a random search around the local optima as a sanity check.
+
+```{r, eval=FALSE}
+reg.interval = runif(3, 0.00080, 0.00120)
+combos = list(l2_leaf_reg=reg.interval)
+pred = trainfuncs$train.predict(train_args, params,
+                         val_pool, val$y, combos=combos)
+```
+```{r}
+pgrid = read.csv(trainfuncs$grid_file)[51:65,]
+trainfuncs$param_range(pgrid, "l2_leaf_reg")
+```
+
+After testing a bunch of random values, we found a rather specific regularization value. Instead of going down the rabbit hole to make it more succinct, we'll just accept the value as-is.
+
+```{r}
+updates = list(depth = 8, l2_leaf_reg = 0.000886676190327853)
+params = trainfuncs$get_params(updates = updates)
+```
+
+Hyperparameter | Explanation
+-------------- | -----------
+random_strength | Adds a normal distribution random variable to the RMSE score of each split as regularization. *random_strength* is the multiplifer of that RV.
+bagging_temperature | Bayesian bootstrap that assigns weights to each feature as regularization. '0' corresponds to uniform distribution, while '1' corresponds to exponential.
+
+There is a bug as of CatBoost v0.11.1 (https://github.com/catboost/catboost/issues/448) that breaks the *random_strength* parameter. Using 'Ordered' *boosting_type* greatly decreases RMSE for our settings, and fails to converge in 1000 iterations. So we're going to have to ignore that parameter. That leaves us with *bagging_temperature*.
+
+```{r, eval=FALSE}
+combos = list(bagging_temperature=c(0.01,0.1,0.25,0.5,0.75,
+                                    1,1.25,1.5,2,2.5,3,5))
+pred = trainfuncs$train.predict(train_args, params,
+                         val_pool, val$y, combos=combos)
+```
+```{r}
+pgrid = read.csv(trainfuncs$grid_file)[65:77,]
+trainfuncs$plot_param(pgrid, "bagging_temperature")
+```
+
+CatBoost uses some formula for its learning rate based on the dimensions and feature types of the dataset. It gets pretty close to optimal, so we'll leave it as-is. So far, we've been using early stopping to automatically detect when validation scores stop improving. However, we would not be able to do this with the test set. So let's used the combined train/validation set and split it 90/10 as an approximation for how many iterations it requires.
+
+```{r, eval=FALSE}
+params = trainfuncs$get_params(updates = updates)
+combined = list(X = rbind(train$X, val$X), y = c(train$y, val$y))
+n = nrow(combined$X)
+split_row = floor(0.9 * n)
+train_cv = combined$X[1:split_row, ]
+val_cv = combined$X[(split_row + 1):n, ]
+train_cv_y = combined$y[1:split_row]
+val_cv_y = combined$y[(split_row + 1):n]
+comb_train_pool = catboost.load_pool(data = train_cv, 
+                                   label = train_cv_y)
+comb_val_pool = catboost.load_pool(data = val_cv,
+                                   label = val_cv_y)
+train_args = list(learn_pool = comb_train_pool,
+                  test_pool = comb_val_pool)
+pred = trainfuncs$train.predict(train_args, params, 
+                         comb_val_pool, val_cv_y)
+```
+
+We have two values: The number of iterations using the normal train/val split, and the 90/10 split.
+
+```{r}
+norm_iter = readRDS(
+  "models/catboost_de8_l20.000886676190327853(3).rds")
+ninety_iter = readRDS(
+  "models/catboost_de8_l20.000886676190327853(8).rds")
+```
+```{r, echo=FALSE}
+paste("Iterations on normal split:", norm_iter$tree_count,
+      "\nIterations on 90/10 split:", ninety_iter$tree_count, 
+      "\n", sep=' ') %>% cat()
+```
+
+Unexpectedly, iterations decreased with increased training size.
+
+```{r, eval=FALSE}
+static_params = list(loss_function = "RMSE",
+                     iterations = 541,
+                     verbose = 10)
+params = trainfuncs$get_params(final = TRUE, updates = updates)
+combined_pool = catboost.load_pool(data = combined$X, 
+                                   label = combined$y)
+train_args = list(learn_pool = combined_pool,
+                  test_pool = NULL)
+pred = trainfuncs$train.predict(train_args, params, 
+                                test_pool)
+```
+
+Best submission was **1.04948** with 541 iterations.

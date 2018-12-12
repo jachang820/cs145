@@ -1,0 +1,168 @@
+---
+title: "Clean Up Users"
+author: "Jonathan Chang"
+date: "November 1, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+library(dplyr)
+```
+
+## Motivation
+
+Preprocessing is the most tedious, but most important part of machine learning. Previously, we cleaned up the reviews set and factored out data we don't need into another file. We've also taken care of simplifying IDs and deleted some useless columns. Now we'll put the finishing touches on 'users.csv' to prepare it for fitting models.
+
+```{r}
+users = read.csv('users_simplified.csv')
+users$yelping_since = as.integer(as.Date(users$yelping_since)
+                                 -as.Date('2004-10-12'), units="days")
+users$elite = as.integer(users$elite != "None")
+non_numbers = c("uid", "elite", "friends")
+users[,!(colnames(users) %in% non_numbers)] =
+  round(scale(users[,!(colnames(users) %in% non_numbers)]), 4)
+users$friends[users$friends == 'None'] = NA
+users$friends = factor(users$friends)
+```
+```{r, eval=FALSE}
+write.csv(users, 'users_clean.csv', row.names=FALSE)
+```
+
+## Friendly Analysis
+
+I want to separate out the friends list and analyze it a bit to determine its usefulness.
+
+```{r}
+friends = data.frame(users$uid, as.character(users$friends))
+colnames(friends) = c("uid", "friends")
+```
+```{r, eval=FALSE}
+write.csv(friends, 'friends.csv', row.names=FALSE)
+```
+
+First, let's find the amount of users with any friends.
+```{r}
+has_friends = table(!is.na(friends$friends))
+```
+```{r, echo=FALSE}
+paste(round(has_friends[2] / sum(has_friends), 3), "% of users have",
+      "friends.", has_friends[1], "users have no friends.", sep=' ') %>%
+  cat()
+```
+
+Ouch! T.T
+
+Amongst the people who do have friends, how many do they have?
+
+```{r}
+friends = friends[!is.na(friends$friends),]
+friend_count = lengths(strsplit(as.character(friends$friends), ', '))
+median_friends = median(friend_count)
+total_friends = sum(friend_count)
+lteq_3 = table(friend_count <= 3)[2]
+lteq_5 = table(friend_count <= 5)[2]
+gt_10 = table(friend_count > 10)[2]
+```
+```{r,echo=FALSE}
+paste("Median # friends:", median_friends, "\n", sep=' ') %>% cat()
+paste("Total # friends:", total_friends, "\n", sep=' ') %>% cat()
+paste("3 or less friends:", lteq_3, "\n", sep=' ') %>% cat()
+paste("5 or less friends:", lteq_5, "\n", sep=' ') %>% cat()
+paste("10 or less friends:", nrow(friends) - gt_10, "\n", sep=' ') %>%
+  cat()
+paste("More than 10 friends:", gt_10, "\n", sep=' ') %>% cat()
+```
+
+Now it's apparent that `r lteq_3` people have 3 or less friends, compared to `r nrow(friends) - gt_10 - lteq_5` people with between 3-10 friends, and `r gt_10` people with more than 10. 
+
+Let's say we assume that people friend other people on Yelp who they agree with, so we roughly assume that a user's friends' reviews are an extension of their own. The idea is that a fully connected user-business review network will pad our training data and give us more to work with. There are several questions:
+
+* Can most users having less than 3 friends help? 
+* It seems like there's a small number of social elite users having the vast majority of friends. Is it helpful to consider the ratings from hundreds of friends of one user? It seems like a waste of processing power for a small, questionable benefit.
+* How many more rows in the training set will we need to add by considering friends?
+
+Unfortunately, only the third question can be answered at this point.
+
+## Cost-Benefit Analysis
+
+Let's count the number of reviews each user has made in the training and validation sets. We'll then multiply these numbers by each friend ID in the friends list to see how big the respective sets will get if we consider the entire friends list as an extension.
+
+```{r}
+reviews = read.csv('reviews_clean.csv')
+validate = read.csv('validate_simplified.csv')
+train_freq = reviews %>% group_by(uid) %>% summarise(n=n())
+val_freq = validate %>% group_by(uid) %>% summarise(n=n())
+```
+```{r, echo=FALSE}
+paste("There are", nrow(train_freq), "training set users, and,",
+      nrow(val_freq), "validation set users with reviews.", sep=' ') %>%
+  cat()
+```
+```{r, eval=FALSE}
+write.csv(data.frame(train_freq), 'train_freq.csv', row.names=FALSE)
+write.csv(data.frame(val_freq), 'val_freq.csv', row.names=FALSE)
+```
+
+We're going to use a function that matches up all the 'uid' from the frequency tables to the friends list.
+```{python}
+import pandas as pd
+
+friends = pd.read_csv('friends.csv').loc[:, "friends"]
+
+def ratings_count(friends, freqs, limit=None):
+	hash = {}
+	
+	# Create O(1) hash of frequencies, 
+	# since pandas is O(n)
+	for index, freq in freqs.iterrows():
+		hash[str(freq['uid'])] = int(freq['n'])
+
+	count = 0
+	for friend in friends:
+		if not pd.isnull(friend):
+			f_list = friend.split(', ')
+
+			# Limit friends per user
+			if limit is not None:
+				f_list = f_list[0:limit]
+
+			# Count friends
+			for uid in f_list:
+				if uid in hash:
+					count += hash[uid]
+
+	return count
+
+def report(limit=None):
+	train_count = ratings_count(friends, pd.read_csv('train_freq.csv'), limit)
+	val_count = ratings_count(friends, pd.read_csv('val_freq.csv'), limit)
+
+	if limit is None:
+		preface = "Considering all friends"
+	else:
+		preface = "If we limit each user to {0} friends".format(limit)
+
+	out = "{0}, there will be {1} and {2}".format(preface, train_count, val_count)
+	out = "{0} from training and validation, respectively.".format(out)
+	print(out)
+
+report()
+report(3)
+report(5)
+report(10)
+```
+
+And this is considering that there are `r nrow(reviews)` and `r nrow(validate)` rows in reviews and validation existing. The questions are:
+
+* Can we afford to more than double the space taken in memory?
+* Is it beneficial to more than double the space taken in memory? (i.e. Is it beneficial to consider more than *X* number of friends?)
+
+For now, the latter may have to be a judgment call. We can answer the former when we see how much memory the training set takes up without considering any friends first. We can consider this a hyperparameter.
+
+But with its use pending, let's take it out of the set and set it aside.
+
+```{r, eval=FALSE}
+users$friends = NULL
+write.csv(users, 'users_clean.csv', row.names=FALSE)
+```

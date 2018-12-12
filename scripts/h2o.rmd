@@ -1,0 +1,81 @@
+---
+title: "H2O"
+author: "Jonathan Chang"
+date: "December 11, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+model = h2o.gbm(y = "stars",
+               training_frame = train,
+               validation_frame = val,
+               ntrees = 500,
+               max_depth = 7,
+               learn_rate = 0.05,
+               learn_rate_annealing = 0.99,
+               stopping_metric = "RMSE",
+               stopping_rounds = 25,
+               seed = 500)
+
+h2o.saveModel(object = model, "models/aml/")
+```
+
+```{r}
+model@model$scoring_history[h2o.nrow(model@model$scoring_history),]
+```
+
+```{r, warning=FALSE, message=FALSE}
+model = h2o.gbm(y = "stars",
+               training_frame = combined,
+               ntrees = 164,
+               max_depth = 7,
+               learn_rate = 0.05,
+               learn_rate_annealing = 0.99,
+               seed = 500)
+
+h2o.saveModel(object = model, "models/aml/")
+pred = h2o.predict(model, test)
+pred = as.vector(pred)
+submit = data.frame(index = seq.int(length(pred)) - 1, 
+                    stars = pred)
+fname = paste("submit/submit_final_gbm_nt164.csv", sep = '')
+write.csv(submit, fname, row.names = FALSE, quote = FALSE)
+```
+
+```{r, warning=FALSE, message=FALSE}
+model = h2o.gbm(y = "stars",
+               training_frame = combined,
+               ntrees = 260,
+               max_depth = 7,
+               learn_rate = 0.05,
+               learn_rate_annealing = 0.99,
+               seed = 500)
+
+h2o.saveModel(object = model, "models/aml/")
+pred = h2o.predict(model, test)
+pred = as.vector(pred)
+submit = data.frame(index = seq.int(length(pred)) - 1, 
+                    stars = pred)
+fname = paste("submit/submit_final_gbm_nt260.csv", sep = '')
+write.csv(submit, fname, row.names = FALSE, quote = FALSE)
+```
+
+```{r, warning=FALSE, message=FALSE}
+model = h2o.deeplearning(y = "stars",
+                       training_frame = train,
+                       validation_frame = val,
+                       hidden = c(10, 10, 10, 10),
+                       activation = "Rectifier",
+                       loss = "Quadratic",
+                       stopping_metric = "RMSE",
+                       stopping_rounds = 25,
+                       seed = 500)
+
+h2o.saveModel(object = model, "models/aml/")
+model@model$scoring_history
+```

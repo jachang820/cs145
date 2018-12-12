@@ -1,0 +1,154 @@
+---
+title: "AutoML"
+author: "Jonathan Chang"
+date: "November 26, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("../"))
+```
+```{r, warning=FALSE, message=FALSE}
+source('scripts/error_analysis.r')
+source('scripts/training_fcts.r')
+library(h2o)
+```
+
+## Stay hydrated
+
+H2O is one of the popular frameworks in R that runs on a Java virtual machine for speed and the ability to multithread. It supports a number of models, in particular neural networks which we are interested in. It also has an automated mode where it trains a bunch of predetermined models, and then random grids of their hyperparameters.
+
+Since at this stage, I don't want to grid search a bunch of more models, especially not neural networks, I'm just going to run their AutoML and see how it does in comparison.
+
+```{r}
+h2o.init(nthread=2)
+```
+
+We load our files as usual and convert them to the format that the JVM requires. Note that there is a bug that spits out a garbage first row, so we'll take care of that as well.
+
+```{r, eval=FALSE}
+users = trainfuncs$read.csv('users_clean.csv')
+business = trainfuncs$read.csv('business_onehot.csv')
+train = trainfuncs$read.csv('reviews_clean.csv')
+train = train[, c("uid", "bid", "stars")]
+val = trainfuncs$read.csv('validate_simplified.csv')
+test = trainfuncs$read.csv('test_simplified.csv')
+
+train = trainfuncs$join_sets(train, split=FALSE)
+train = as.h2o(train, destination_frame="train")
+val = trainfuncs$join_sets(val, split=FALSE)
+val = as.h2o(val, destination_frame="val")
+test = trainfuncs$join_sets(test, split=FALSE)
+test = as.h2o(test, destination_frame="test")
+
+# Fix h2o bug of empty first row
+train = train[-1,]
+val = val[-1,]
+test = test[-1,] 
+combined = h2o.rbind(train, val)
+```
+
+We have the option to limit runtime by number of models and the time itself. It will stop at the soonest specification. Since there is no option to specify which models we want to run besides the algorithm names, we'll just run one algorithm at a time. We're setting 50 models and roughly 36 hours in seconds to ensure that it runs its full suite without interruption. Then, we'll try several different algorithms in this way.
+
+```{r}
+run_h2o = function(algo) {
+  algos = c("GLM", "DRF", "XGBoost", "DeepLearning", "GBM")
+  algos = algos[-c(algo)]
+  aml = h2o.automl(y = "stars",
+                   training_frame = combined,
+                   max_models = 50,
+                   max_runtime_secs = 130000,
+                   stopping_metric = "RMSE",
+                   stopping_rounds = 25,
+                   sort_metric = "RMSE",
+                   exclude_algos = algos,
+                   project_name = "YelpFinal")
+  
+  # Save cross-validation leader board.
+  leaders = as.data.frame(aml@leaderboard)
+  if (file.exists('automl_leaders.csv')) {
+    cols = FALSE
+    app = TRUE
+  } else {
+    cols = TRUE
+    app = FALSE
+  }
+  write.table(leaders, 'automl_leaders.csv', 
+                        row.names = FALSE,
+                        col.names = cols,
+                        append = app,
+                        sep = ',')
+  
+  # Save models
+  for(i in 1:nrow(leaders)) {
+    aml1 = h2o.getModel(aml@leaderboard[i, 1])
+    h2o.saveModel(object = aml1, "models/aml/")
+  }
+}
+```
+
+```{r, eval=FALSE}
+run_h2o(c("DRF", "GLM"))
+run_h2o(c("DeepLearning"))
+run_h2o(c("GBM"))
+```
+
+```{r}
+leaders = trainfuncs$read.csv('automl_leaders.csv', 
+                              stringsAsFactors = FALSE)
+leaders = leaders[order(leaders$rmse),]
+leaders[-c(2, 4, 5, 6)]
+```
+
+Now, we'll predict on the test set with all the models we've generated.
+
+```{r, eval=FALSE}
+models = list.files("models/aml/")
+for (i in 1:length(models)) {
+  model = h2o.getModel(models[i])
+  pred = h2o.predict(model, test)
+  pred = as.vector(pred)
+  submit = data.frame(index = seq.int(length(pred)) - 1, 
+                      stars = pred)
+  fname = paste("submit/", models[i], ".csv", sep = '')
+  write.csv(submit, fname, row.names = FALSE, quote = FALSE)
+}
+```
+
+## Results
+
+The results are pretty much as expected for an automated random search. It got close to the best results, but not quite there. There is quite a bit of overfitting, since the validation results were much better than actual submissions. Interestingly, the neural network scored worst across the board. That the gradient boosting machine (GBM) scored highest isn't a surprise, since it matches what we've previously done with XGBoost and CatBoost. The submission results were
+
+Model | RMSE Score
+------|------------
+XRT | 1.06224
+GBM | 1.05121
+Stacked (Best of GBM) | 1.05117
+Stacked (All GBM models) | 1.04963
+
+
+
+```{r}
+pred = h2o.predict(model, val)
+pred = as.integer(as.vector(pred$predict))
+analysis$rmse(pred, as.integer(as.vector(val$stars)))
+```
+
+```{r, warning=FALSE, message=FALSE}
+model = h2o.deeplearning(y = "stars",
+                       training_frame = combined,
+                       hidden = c(10, 10, 10, 10),
+                       activation = "Rectifier",
+                       loss = "Quadratic",
+                       stopping_metric = "RMSE",
+                       stopping_rounds = 25,
+                       seed = 500)
+
+h2o.saveModel(object = model, "models/aml/")
+pred = h2o.predict(model, test)
+pred = as.vector(pred)
+submit = data.frame(index = seq.int(length(pred)) - 1, 
+                    stars = pred)
+fname = paste("submit/submit_final_nn_hi10x4_acRe.csv", sep = '')
+write.csv(submit, fname, row.names = FALSE, quote = FALSE)
+```
