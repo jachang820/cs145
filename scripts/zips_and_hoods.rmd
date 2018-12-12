@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_knit$set(root.dir = normalizePath(".."))
+knitr::opts_knit$set(root.dir = normalizePath("../"))
 library(dplyr)
 ```
 
@@ -87,7 +87,7 @@ paste("There are", n_zips_per_hood, "postal code-neighborhood",
       "combinations. This happens to be", overlap, "higher than the",
       "number of unique postal codes with hoods. Therefore, there must",
       "be", overlap, "hoods with duplicate postal codes in more than",
-      "one hood.", zip=' ') %>%
+      "one hood.", sep=' ') %>%
   cat()
 ```
 
@@ -96,7 +96,7 @@ paste("There are", n_zips_per_hood, "postal code-neighborhood",
 Let's look at businesses without given neighborhoods.
 
 ```{r}
-bnohood = business[business$neighborhood=="",]
+bnohood = business[business$neighborhood=="None",]
 num_zips_no_hood = length(unique(bnohood$postal_code))
 over_zip = num_zips_with_hoods + num_zips_no_hood - num_zips
 ```
@@ -105,7 +105,7 @@ paste("There are", num_zips_no_hood, "postal codes without a hood.",
       "Since postal codes without and without hoods exceed the total",
       "number of postal codes (", num_zips_with_hoods, "+", 
       num_zips_no_hood, ">", num_zips, "), there must be", over_zip,
-      "postal codes with both hood and no hood.", zip=' ') %>% cat()
+      "postal codes with both hood and no hood.", sep=' ') %>% cat()
 ```
 
 Previously, we found that most postal codes are associated to neighborhoods concentrated in a few cities. We want to find if postal codes are concentrated in a few cities without neighborhoods, or if this is just some phenomenon specific to cities with hoods.
