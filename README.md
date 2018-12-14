@@ -33,38 +33,6 @@ This was a class project for CS145. We were given Yelp datasets, which were a su
 
 ![Top 10](https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/cs145kaggle_top10.png)
 
-On the public board, simply using the users's *average_stars* field as a prediction yielded **1.13383**. The code could have been written in less than 20 lines:
-
-```python
-
-import pandas as pd
-import numpy as np
-
-# Read validation set.
-val = pd.read_csv('validate_queries.csv')
-
-# Average stars per each user.
-average_stars = {}
-for i in range(len(users.index)):
-	average_stars[users.loc[i, 'user_id']] = users.loc[i, 'average_stars']
-
-# Assign rating based on the average star of the user.
-ratings = [average_stars[val.loc[i, 'user_id']] for i in range(len(val.index))]
-
-# Predict on test and create submission.
-test = pd.read_csv('test_queries.csv')
-ratings = [average_stars[test.loc[i, 'user_id']] for i in range(len(test.index))]
-d = {'index': np.arange(len(test.index)), 'stars': ratings}
-submit = pd.DataFrame(data = d)
-submit.to_csv('submission.csv', index = False)
-
-```
-Using a weighted mean of *average_stars* and businesses' *stars* field yielded **1.07687**. A simple search for the weights is shown below using a *ggplot*. This would have placed 15/30.
-
-![weighted mean](https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/weighted.png)
-
-With that as the reference, the rest of the distance is just chasing after minutiae. 
-
 ## The Journey
 
 I kept a running documentation of my entire process, including some false starts. The following were created from R Markdown, which are basically Markdown scripts along with R and Python code. The original files are the *.rmd* files under the *Scripts/* directory, and can be run similar to Jupyter notebooks in RStudio. The following are outputs using Knit into html.
