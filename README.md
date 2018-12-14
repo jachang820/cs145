@@ -66,22 +66,39 @@ With that as the reference, the rest of the distance is just chasing after minut
 I kept a running documentation of my entire process, including some false starts. The following were created from R Markdown, which are basically Markdown scripts along with R and Python code. The original files are the *.rmd* files under the *Scripts/* directory, and can be run similar to Jupyter notebooks in RStudio. The following are outputs using Knit into html.
 
 (Test Completeness of Reviews)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/test_reviews_completeness.html]
+
 (Mean Modeling)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/mean_modeling.html]
+
 (Simplifying IDs)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/simplifying_ids.html]
+
 (Factor Review Set)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/factor_review_set.html]
+
 (Clean Up Users)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/clean_up_users.html]
+
 (Cleaning Business: Opening Hours (Part 1))[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/opening_hours.html]
+
 (Cleaning Business: PCA With Categories (Part 2))[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/pca_with_categories.html]
+
 (Cleaning Business: Attribute Objects (Part 3))[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/attribute_objects.html]
+
 (Cleaning Business: Postal Codes and Neighborhoods (Part 4))[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/zips_and_hoods.html]
+
 (Cleaning Business: Second Attempt at Feature Reduction (Part 5))[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/category2vec.html]
+
 (Error Analysis)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/error_analysis.html]
+
 (Streamline Training)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/streamline_training.html]
+
 (Random Forest: That Was Random!)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/random_forest.html]
+
 (XGBoost: So Extreme!)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/xgboost.html]
+
 (CatBoost)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/catboost.html]
+
 (H2O AutoML)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/automl.html]
+
 (k-Nearest Neighbors)[https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/clustering.html]
+
 
 ## The Group
 
