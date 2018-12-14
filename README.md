@@ -57,7 +57,7 @@ submit.to_csv('submission.csv', index = False)
 ```
 Using a weighted mean of *average_stars* and businesses' *stars* field yielded **1.07687**. A simple search for the weights is shown below using a *ggplot*.
 
-[logo]: https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/weighted.png "Weighted Mean"
+![weighted mean](https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/weighted.png)
 
 With that as the reference, the rest of the distance is just chasing after minutiae. 
 
