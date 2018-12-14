@@ -29,7 +29,11 @@ The CatBoost library in R may not install on a Windows machine. In that case, an
 
 ## Description
 
-This was a class project for CS145. We were given Yelp datasets, which were a subset of the one on Kaggle. The datasets included user information, business information, and users' ratings of businesses in a given train, validation and test set. My final score was **1.03968** RMSE, first on public and private boards. The vast majority of the time was spent grid searching hyperparameters and setting up some code to make the training process neater. On the public board, simply using the users's *average_stars* field as a prediction yielded **1.13383**. The code could have been written in less than 20 lines:
+This was a class project for CS145. We were given Yelp datasets, which were a subset of the one on Kaggle. The datasets included user information, business information, and users' ratings of businesses in a given train, validation and test set. My final score was **1.03968** RMSE, first on public and private boards. The vast majority of the time was spent grid searching hyperparameters and setting up some code to make the training process neater.
+
+![Top 10](https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/cs145kaggle_top10.png)
+
+On the public board, simply using the users's *average_stars* field as a prediction yielded **1.13383**. The code could have been written in less than 20 lines:
 
 ```python
 
@@ -55,7 +59,7 @@ submit = pd.DataFrame(data = d)
 submit.to_csv('submission.csv', index = False)
 
 ```
-Using a weighted mean of *average_stars* and businesses' *stars* field yielded **1.07687**. A simple search for the weights is shown below using a *ggplot*.
+Using a weighted mean of *average_stars* and businesses' *stars* field yielded **1.07687**. A simple search for the weights is shown below using a *ggplot*. This would have placed 15/30.
 
 ![weighted mean](https://s3-us-west-2.amazonaws.com/jchang-rstudio/html/weighted.png)
 
